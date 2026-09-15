@@ -13,16 +13,113 @@ class ParticleGallery {
         this.memoSaveTimer = null;
         this.currentDetailPinId = null;
 
+        this.searchToggle = document.getElementById('search-toggle');
+        this.searchPanel = document.getElementById('search-panel');
+        this.searchTagsEl = document.getElementById('search-tags');
+        this.searchTagInput = document.getElementById('search-tag-input');
+        this.searchResultsEl = document.getElementById('search-results');
+        this.searchTags = [];
+        this.searchRequestId = 0;
+        this.relatedRequestId = 0;
+
+        // 마우스를 따라다니며 검색 버튼을 가리키는 화살표의 상태
+        this.searchPointer = document.getElementById('search-pointer');
+        this.searchPointerHint = document.getElementById('search-pointer-hint');
+        this.pointerTarget = { x: -200, y: -200 };
+        this.pointerPos = { x: -200, y: -200 };
+        this.pointerAngle = 0;
+        this.pointerHasMoved = false;
+        this.showPointerHint = false;
+
+        // 이미지 우클릭 → 삭제 확인 팝업
+        this.deleteConfirm = document.getElementById('delete-confirm');
+        this.deleteConfirmCancel = document.getElementById('delete-confirm-cancel');
+        this.deleteConfirmDeleteBtn = document.getElementById('delete-confirm-delete');
+        this.pendingDeleteParticle = null;
+
         this.mouse = new THREE.Vector2();
         this.raycaster = new THREE.Raycaster();
         this.hoveredParticle = null;
         this.particles = [];
         this.pinsData = [];
         this.isLoading = true;
-        
+        this.introPlaying = false;
+
+        // 스페이스바를 누르고 있으면 터널이 더 빠르게 흘러간다
+        this.driftBoostActive = false;
+        this.driftBoostMultiplier = 1;
+
         this.init();
         this.setupEventListeners();
         this.loadPinsFromAPI();
+        this.openDirectPinIfLinked();
+        this.openSearchFromQueryParam();
+        this.maybeShowSearchHint();
+    }
+
+    /**
+     * 메인 페이지 ARCHIVE INDEX의 카테고리를 눌러 들어온 경우(gallery.html?q=카테고리),
+     * 터널에 도착하자마자 검색 패널을 열고 그 카테고리를 태그로 넣어 바로 결과를 보여준다.
+     */
+    openSearchFromQueryParam() {
+        const query = new URLSearchParams(window.location.search).get('q');
+        if (!query) return;
+
+        this.searchPanel.classList.remove('hidden');
+        this.addSearchTag(query);
+    }
+
+    /**
+     * 화살표가 검색 버튼을 가리킨다는 사실이 회전이 점진적이어서 잘 안 읽힌다는
+     * 피드백에 따른 보완책. 이 브라우저에서 처음 터널에 들어왔을 때 한 번만,
+     * 화살표와 검색 버튼을 동시에 펄스시키고 화살표 옆에 "SEARCH →" 힌트를 잠깐
+     * 띄워서 "이 화살표 = 저기 검색 있음"이라는 관계를 명시적으로 가르쳐준다.
+     * 한 번 보고 나면 다시는 반복하지 않고, 평소엔 조용히 회전만 한다.
+     */
+    maybeShowSearchHint() {
+        let alreadySeen = false;
+        try {
+            alreadySeen = !!localStorage.getItem('searchHintSeen');
+            localStorage.setItem('searchHintSeen', '1');
+        } catch (err) {
+            // localStorage를 못 쓰는 환경이면 매번 살짝 보여줘도 무방하니 그냥 진행한다
+        }
+        if (alreadySeen) return;
+
+        const PULSE_DURATION = 4200; // search-toggle-pulse/search-pointer-pulse의 1.4s x 3회와 맞춘다
+
+        setTimeout(() => {
+            this.searchToggle.classList.add('pulse');
+            this.searchPointer.classList.add('pulse');
+            this.showPointerHint = true;
+            this.searchPointerHint.classList.add('visible');
+
+            setTimeout(() => {
+                this.searchToggle.classList.remove('pulse');
+                this.searchPointer.classList.remove('pulse');
+                this.showPointerHint = false;
+                this.searchPointerHint.classList.remove('visible');
+            }, PULSE_DURATION);
+        }, 2500);
+    }
+
+    /**
+     * 메인 페이지 마퀴 카드 클릭(gallery.html?pin=아이디)처럼, 터널에 뿌려지는
+     * 무작위 샘플과 무관하게 특정 핀 하나를 바로 상세 페이지로 열어야 할 때 사용한다.
+     */
+    async openDirectPinIfLinked() {
+        const pinId = new URLSearchParams(window.location.search).get('pin');
+        if (!pinId) return;
+
+        try {
+            const response = await fetch(`/api/pin/${encodeURIComponent(pinId)}`);
+            const data = await response.json();
+            if (data.success && data.pin) {
+                this.showDetailPage(data.pin);
+            }
+        } catch (err) {
+            console.warn('링크된 핀을 불러오지 못했습니다:', err);
+        }
     }
 
     init() {
@@ -43,7 +140,7 @@ class ParticleGallery {
         const width = window.innerWidth;
         const height = window.innerHeight;
         this.camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
-        this.camera.position.set(0, 0, 4);
+        this.camera.position.set(0, 0, 2);
 
         // Renderer 설정
         this.renderer = new THREE.WebGLRenderer({
@@ -54,13 +151,16 @@ class ParticleGallery {
         this.renderer.setPixelRatio(window.devicePixelRatio);
         this.container.appendChild(this.renderer.domElement);
 
-        // 마우스 드래그로 회전, 휠로 줌, 우클릭 드래그로 이동 - 어느 각도에서든 볼 수 있게 함
+        // 마우스 드래그로 회전, 휠로 줌, 우클릭 드래그로 이동 - 어느 각도에서든 볼 수 있게 함.
+        // 블렌더처럼 Shift를 누른 채 마우스 휠(가운데) 버튼을 드래그하면 카메라 자체를
+        // x/y로 트럭(pan)하듯 옮길 수 있다 (평소엔 가운데 버튼 = 줌)
         this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.08;
         this.controls.minDistance = 1;
-        this.controls.maxDistance = 30;
-        this.controls.target.set(0, 0, -8);
+        this.controls.maxDistance = 40;
+        this.controls.target.set(0, 0, -6);
+        this.defaultMiddleMouseAction = this.controls.mouseButtons.MIDDLE;
 
         // TextureLoader 초기화 - 같은 이미지를 여러 카드가 재사용할 때 중복 요청 방지
         THREE.Cache.enabled = true;
@@ -92,18 +192,19 @@ class ParticleGallery {
         try {
             console.log('📌 Pinterest 데이터를 서버에서 로드 중...');
             const response = await fetch('/api/pins');
-            
+
             if (!response.ok) {
                 throw new Error(`API Error: ${response.status}`);
             }
-            
+
             const data = await response.json();
-            
+
             if (data.success && data.pins && data.pins.length > 0) {
-                console.log(`✓ ${data.pins.length}개의 핀을 로드했습니다 (출처: ${data.source})`);
+                console.log(`✓ ${data.pins.length}개의 핀을 로드했습니다`);
                 this.pinsData = data.pins;
                 this.hideLoading();
                 this.createParticles();
+                this.playEntranceAnimation();
                 this.animate();
             } else {
                 throw new Error('핀 데이터를 가져올 수 없습니다');
@@ -164,16 +265,27 @@ class ParticleGallery {
                 const angle = (slot / cardsPerRing) * Math.PI * 2 + ringOffset + (Math.random() - 0.5) * 0.12;
                 const radius = this.tunnelRadius + (Math.random() - 0.5) * 0.6;
                 const jitterZ = (Math.random() - 0.5) * (this.tunnelRingSpacing * 0.3);
+                const finalZ = z + jitterZ;
+
+                // 입장 연출용: 처음엔 저 먼 소실점 한 점에 뭉쳐 있다가(반경 0에 가깝고 아주 깊은 z)
+                // 열차처럼 뿜어져 나와 제자리(반경/깊이 모두 정상값)로 달려온다
+                const spawnRadius = 0.25;
+                const spawnZ = -this.tunnelDepth * 2.4;
 
                 const particle = {
                     position: new THREE.Vector3(
-                        Math.cos(angle) * radius,
-                        Math.sin(angle) * radius,
-                        z + jitterZ
+                        Math.cos(angle) * spawnRadius,
+                        Math.sin(angle) * spawnRadius,
+                        spawnZ
                     ),
-                    baseZ: z + jitterZ,
+                    baseZ: finalZ,
                     angle,
                     radius,
+                    spawnRadius,
+                    spawnZ,
+                    // 카드마다 전체 크기(면적)를 다르게 줘서 획일적인 그리드처럼 보이지 않게 한다.
+                    // 실제 이미지의 가로세로 비율은 로드된 뒤에 알게 되므로 createImageCard에서 반영한다.
+                    sizeScale: 0.75 + Math.random() * 0.6,
                     mesh: null,
                     pinData: {
                         id: pinData.id,
@@ -189,6 +301,7 @@ class ParticleGallery {
                 };
 
                 // 이미지 텍스쳐를 가진 카드 형태의 파티클 (터널 안쪽, 즉 중심축을 향해 face)
+                // lookAt은 angle에만 의존하므로 spawn 위치에서 계산해도 최종 위치에서도 그대로 맞다
                 particle.mesh = this.createImageCard(particle, pinData);
                 particle.mesh.position.copy(particle.position);
                 particle.mesh.lookAt(0, 0, particle.position.z);
@@ -207,7 +320,7 @@ class ParticleGallery {
      * 실제 카드가 아니므로 호버/클릭 대상에서 제외하고 particleGroup과 분리해서 관리한다.
      */
     createBackgroundDust() {
-        const dustCount = 220;
+        const dustCount = 1000;
 
         // 옅은 회색 테두리가 있는 "페이지" 모양 텍스처 하나를 모든 조각이 공유한다
         const dustCanvas = document.createElement('canvas');
@@ -223,17 +336,18 @@ class ParticleGallery {
 
         for (let i = 0; i < dustCount; i++) {
             const angle = Math.random() * Math.PI * 2;
-            // 터널 반경보다 훨씬 바깥, 훨씬 넓은 범위에 성기게 흩뿌린다
-            const radius = this.tunnelRadius + 4 + Math.random() * 26;
+            // 터널 바로 바깥쪽에 더 몰리고, 멀어질수록 성기게 퍼지도록 편중시킨다
+            // (전부 균일하게 뿌리면 시야에 거의 안 걸리므로 가까운 쪽 밀도를 높임)
+            const radius = this.tunnelRadius + 2 + Math.random() * Math.random() * 28;
             const z = -Math.random() * this.tunnelDepth * 1.4;
 
-            const size = 0.35 + Math.random() * 0.6;
+            const size = 0.4 + Math.random() * 0.7;
             const geometry = new THREE.PlaneGeometry(size, size * (0.7 + Math.random() * 0.5));
             const material = new THREE.MeshBasicMaterial({
                 map: dustTexture,
                 color: 0xffffff,
                 transparent: true,
-                opacity: 0.18 + Math.random() * 0.3,
+                opacity: 0.22 + Math.random() * 0.35,
                 side: THREE.DoubleSide,
                 depthWrite: false
             });
@@ -248,15 +362,64 @@ class ParticleGallery {
     }
 
     /**
+     * "링크 스타트" 진입 연출 - 터널은 처음엔 존재하지 않다가, 정면 소실점에서
+     * 카드들이 열차처럼 뿜어져 나와 제자리를 채운다. 카메라는 처음부터 끝까지
+     * 정상적인 정면 구도 그대로 고정되어 있다.
+     * 이 동안은 OrbitControls를 잠시 꺼서 사용자 조작과 충돌하지 않게 한다.
+     */
+    playEntranceAnimation() {
+        const duration = 2200;
+
+        // 카드 수백 개를 만드느라 메인 스레드가 잠깐 멈추는데, 그 시간까지
+        // 애니메이션 진행률에 포함되면 시작하자마자 끝난 것처럼 보인다.
+        // 그래서 시작 시각은 함수 호출 시점이 아니라 "실제로 첫 프레임이
+        // 그려지는 시점"(rAF 콜백이 처음 실행되는 순간)으로 잡는다.
+        let startTime = null;
+
+        this.controls.enabled = false;
+        this.introPlaying = true;
+
+        const easeOutQuart = (t) => 1 - Math.pow(1 - t, 4);
+
+        const step = (now) => {
+            if (startTime === null) startTime = now;
+            const t = Math.min((now - startTime) / duration, 1);
+            const eCard = easeOutQuart(t);
+
+            // 소실점(정면) 한 점에 뭉쳐 있던 카드들이 열차처럼 뿜어져 나와 제자리를 채운다
+            this.particles.forEach((p) => {
+                const r = p.spawnRadius + (p.radius - p.spawnRadius) * eCard;
+                const z = p.spawnZ + (p.baseZ - p.spawnZ) * eCard;
+                p.position.set(Math.cos(p.angle) * r, Math.sin(p.angle) * r, z);
+                p.mesh.position.copy(p.position);
+            });
+
+            if (t < 1) {
+                requestAnimationFrame(step);
+            } else {
+                this.controls.enabled = true;
+                this.introPlaying = false;
+            }
+        };
+
+        requestAnimationFrame(step);
+    }
+
+    /**
      * 이미지를 텍스쳐로 하는 카드 형태의 파티클 생성
      */
     createImageCard(particle, pinData) {
-        // 카드 크기 (훨씬 더 큼 - 2배, 실제 이미지가 보이도록)
-        // 포켓몬 카드처럼 두께 없는 완전히 평평한 카드로 표현한다
-        const cardWidth = 1.7;
-        const cardHeight = 1.4;
+        // 포켓몬 카드처럼 두께 없는 완전히 평평한 카드로 표현한다.
+        // 모든 카드를 같은 박스 규격에 억지로 맞추지 않고, 실제 이미지의 가로세로 비율과
+        // particle.sizeScale(카드마다 다른 전체 크기)을 그대로 반영해 시각적으로 다양하게 만든다.
+        const baseHeight = 1.4 * particle.sizeScale;
 
-        const geometry = new THREE.PlaneGeometry(cardWidth, cardHeight);
+        // 이미지가 로드되기 전까지 보여줄 placeholder 비율도 몇 가지 중에 무작위로 골라서,
+        // 로드 완료 전부터 이미 크기/비율이 제각각으로 보이게 한다
+        const PLACEHOLDER_ASPECTS = [0.75, 0.85, 1, 1.15, 1.3, 1.5];
+        let aspect = PLACEHOLDER_ASPECTS[Math.floor(Math.random() * PLACEHOLDER_ASPECTS.length)];
+
+        const geometry = new THREE.PlaneGeometry(baseHeight * aspect, baseHeight);
 
         // 카드마다 하나의 액센트 색을 정해서, 테두리/캡션 바 등 공통 프레임에 일관되게 사용한다
         // (상세 페이지를 열 때도 같은 색을 재사용하기 위해 particle.pinData에 저장해둔다)
@@ -265,7 +428,7 @@ class ParticleGallery {
         particle.pinData.accentColor = accentColor;
 
         // 이미지가 로드되기 전에도 동일한 프레임 디자인을 보여준다 (그라디언트 placeholder)
-        const canvas = this.renderCardFace(null, pinData, accentColor);
+        const canvas = this.renderCardFace(null, pinData, accentColor, aspect);
         const canvasTexture = new THREE.CanvasTexture(canvas);
         canvasTexture.magFilter = THREE.LinearFilter;
         canvasTexture.minFilter = THREE.LinearMipmapLinearFilter;
@@ -297,8 +460,20 @@ class ParticleGallery {
             this.textureLoader.load(
                 loadUrl,
                 (loadedTexture) => {
+                    // 실제 이미지의 원본 비율을 알게 됐으니, placeholder 비율 대신 진짜 비율로
+                    // 지오메트리를 다시 만든다 (극단적으로 길쭉해지지 않도록만 범위를 제한한다)
+                    const img = loadedTexture.image;
+                    const realAspect = img && img.naturalWidth && img.naturalHeight
+                        ? img.naturalWidth / img.naturalHeight
+                        : aspect;
+                    aspect = Math.min(Math.max(realAspect, 0.55), 1.8);
+
+                    const newGeometry = new THREE.PlaneGeometry(baseHeight * aspect, baseHeight);
+                    card.geometry.dispose();
+                    card.geometry = newGeometry;
+
                     // 실제 사진도 동일한 프레임 디자인 안에 넣어서 일관된 인터페이스로 보이게 한다
-                    const framedCanvas = this.renderCardFace(loadedTexture.image, pinData, accentColor);
+                    const framedCanvas = this.renderCardFace(img, pinData, accentColor, aspect);
                     const framedTexture = new THREE.CanvasTexture(framedCanvas);
                     framedTexture.magFilter = THREE.LinearFilter;
                     framedTexture.minFilter = THREE.LinearMipmapLinearFilter;
@@ -324,11 +499,12 @@ class ParticleGallery {
      * 모든 카드에 공통으로 적용되는 프레임(매트+테두리+캡션 바) 안에
      * 이미지(또는 placeholder 그라디언트)를 그려 넣은 캔버스를 생성한다.
      * image가 null이면 이미지 로딩 전 placeholder를 그린다.
+     * aspect(가로/세로)에 맞춰 캔버스 자체의 가로세로 비율도 카드마다 다르게 만든다.
      */
-    renderCardFace(image, pinData, accentColor) {
+    renderCardFace(image, pinData, accentColor, aspect = 1.2) {
         // 터널 안에 수백 장이 동시에 존재하므로 해상도를 적당히 낮춰 GPU 메모리를 아낀다
-        const width = 320;
-        const height = 264; // cardWidth:cardHeight(1.7:1.4)와 동일한 비율
+        const height = 264;
+        const width = Math.round(height * aspect);
 
         const canvas = document.createElement('canvas');
         canvas.width = width;
@@ -418,7 +594,10 @@ class ParticleGallery {
         const iw = img.naturalWidth || img.width;
         const ih = img.naturalHeight || img.height;
         if (!iw || !ih) return;
-        const scale = Math.max(w / iw, h / ih);
+        // 원본 핀 이미지 캡처 자체에 핀터레스트 페이지의 둥근 모서리(배경색이 비쳐 보이는
+        // 흰 여백)가 섞여 들어가 있어서, 카드 비율이 이미지 비율과 거의 같아 크롭이 거의
+        // 안 일어날 때도 그 모서리가 보이지 않도록 필요한 배율보다 살짝 더 확대해서 그린다
+        const scale = Math.max(w / iw, h / ih) * 1.08;
         const dw = iw * scale;
         const dh = ih * scale;
         const dx = x + (w - dw) / 2;
@@ -527,24 +706,223 @@ class ParticleGallery {
         window.addEventListener('mousemove', (e) => this.onMouseMove(e));
         window.addEventListener('click', (e) => this.onClick(e));
         window.addEventListener('resize', () => this.onWindowResize());
+        window.addEventListener('contextmenu', (e) => this.onContextMenu(e));
+
+        // Shift를 누르고 있는 동안엔 가운데 버튼 드래그가 줌(DOLLY) 대신 이동(PAN)으로 바뀐다
+        // (블렌더의 Shift+마우스휠 드래그와 같은 조작)
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Shift') this.controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'Shift') this.controls.mouseButtons.MIDDLE = this.defaultMiddleMouseAction;
+        });
+
+        // 클릭이 카드를 여는 것으로 오인되지 않도록, 드래그로 끝난 클릭(마우스가 유의미하게
+        // 움직인 경우)은 mousedown 시점 위치를 기억해뒀다가 onClick에서 걸러낸다.
+        window.addEventListener('mousedown', (e) => {
+            this.mouseDownPos = { x: e.clientX, y: e.clientY };
+        });
+
+        // 스페이스바를 누르고 있는 동안 터널이 더 빠르게 흘러간다 (입력창에 타이핑 중일 땐 무시)
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && !this.isTypingContext(e.target)) {
+                e.preventDefault();
+                this.driftBoostActive = true;
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'Space') this.driftBoostActive = false;
+        });
+        window.addEventListener('blur', () => {
+            this.driftBoostActive = false;
+        });
+
+        // Esc: 열려 있는 오버레이가 있으면 가까운 것부터 하나씩 닫고, 아무것도 없으면
+        // 메인 페이지로 나간다
+        window.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            if (!this.deleteConfirm.classList.contains('hidden')) {
+                this.hideDeleteConfirm();
+                return;
+            }
+            if (!this.detailPage.classList.contains('hidden')) {
+                this.closeDetailPage();
+                return;
+            }
+            if (!this.searchPanel.classList.contains('hidden')) {
+                this.searchPanel.classList.add('hidden');
+                return;
+            }
+            window.location.href = 'index.html';
+        });
+
+        this.deleteConfirmCancel.addEventListener('click', () => this.hideDeleteConfirm());
+        this.deleteConfirmDeleteBtn.addEventListener('click', () => this.confirmDeletePin());
+
+        // 검색 버튼을 가리키는 화살표는 카드 호버/클릭 로직과 무관하게
+        // 항상 최신 커서 위치를 알아야 하므로 별도 리스너로 추적한다
+        window.addEventListener('mousemove', (e) => {
+            this.pointerTarget.x = e.clientX;
+            this.pointerTarget.y = e.clientY;
+            this.pointerHasMoved = true;
+        });
         
         this.detailClose.addEventListener('click', () => this.closeDetailPage());
         this.detailMemo.addEventListener('input', () => this.onMemoInput());
 
         const tagInput = document.getElementById('detail-tag-input');
         tagInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            // 한글 등 조합형 입력 중에 눌린 Enter는 무시한다 - 그렇지 않으면 아직 조합 중인
+            // 완성되지 않은 글자가 그대로(또는 다음 글자와 뒤섞여) 태그로 추가되어 버린다.
+            if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
                 e.preventDefault();
                 this.addDetailTag(tagInput.value);
                 tagInput.value = '';
             }
         });
+
+        this.searchToggle.addEventListener('click', () => this.toggleSearchPanel());
+        this.searchTagInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
+                e.preventDefault();
+                this.addSearchTag(this.searchTagInput.value);
+                this.searchTagInput.value = '';
+            } else if (e.key === 'Backspace' && this.searchTagInput.value === '' && this.searchTags.length > 0) {
+                this.removeSearchTag(this.searchTags[this.searchTags.length - 1]);
+            }
+        });
+
+        // 검색 패널/상세 페이지 안에서 일어나는 클릭(태그 삭제 등)은 3D 씬 클릭 처리로
+        // 번지면 안 된다. innerHTML을 다시 그리면서 클릭된 요소 자체가 DOM에서 떨어져 나가면
+        // 이후 window의 onClick에서 하던 contains() 검사가 무력화되므로, 아예 여기서
+        // 이벤트 전파를 막아 window까지 올라가지 않게 한다.
+        this.searchPanel.addEventListener('click', (e) => e.stopPropagation());
+        this.searchToggle.addEventListener('click', (e) => e.stopPropagation());
+        this.detailPage.addEventListener('click', (e) => e.stopPropagation());
+
+        // "/" 단축키로 검색 패널을 바로 열고 입력에 포커스 (다른 입력창에 타이핑 중일 땐 무시)
+        window.addEventListener('keydown', (e) => {
+            if (e.key === '/' && !this.isTypingContext(e.target)) {
+                e.preventDefault();
+                this.searchPanel.classList.remove('hidden');
+                this.searchToggle.classList.remove('pulse');
+                this.searchTagInput.focus();
+            }
+        });
+    }
+
+    isTypingContext(target) {
+        if (!target) return false;
+        const tag = target.tagName;
+        return tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable;
+    }
+
+    /**
+     * 터널 안에서 키워드를 태그처럼 하나씩 추가/제거하며 검색하는 패널.
+     * 태그가 늘어날수록 서버에서 AND 조건 + 관련도 점수로 좁혀진 결과를 받아 목록으로 보여준다.
+     */
+    toggleSearchPanel() {
+        const opening = this.searchPanel.classList.contains('hidden');
+        this.searchPanel.classList.toggle('hidden', !opening);
+        if (opening) {
+            this.searchTagInput.focus();
+        }
+    }
+
+    addSearchTag(rawValue) {
+        const value = String(rawValue || '').trim().toLowerCase();
+        if (!value || this.searchTags.includes(value)) return;
+        this.searchTags.push(value);
+        this.renderSearchTags();
+        this.runSearch();
+    }
+
+    removeSearchTag(value) {
+        this.searchTags = this.searchTags.filter((t) => t !== value);
+        this.renderSearchTags();
+        this.runSearch();
+    }
+
+    renderSearchTags() {
+        this.searchTagsEl.innerHTML = '';
+        this.searchTags.forEach((tag) => {
+            const chip = document.createElement('span');
+            chip.className = 'search-tag-chip';
+            chip.textContent = tag;
+
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'search-tag-remove';
+            remove.textContent = '×';
+            remove.addEventListener('click', () => this.removeSearchTag(tag));
+            chip.appendChild(remove);
+
+            this.searchTagsEl.appendChild(chip);
+        });
+    }
+
+    async runSearch() {
+        if (this.searchTags.length === 0) {
+            this.searchResultsEl.innerHTML = '';
+            return;
+        }
+
+        const requestId = ++this.searchRequestId;
+        this.searchResultsEl.innerHTML = '<div class="search-status">검색 중...</div>';
+
+        try {
+            const query = this.searchTags.join(' ');
+            const response = await fetch(`/api/pins/search?q=${encodeURIComponent(query)}`);
+            const data = await response.json();
+
+            // 태그를 빠르게 추가/삭제하면 응답이 뒤섞여 도착할 수 있으므로, 가장 마지막 요청만 반영한다
+            if (requestId !== this.searchRequestId) return;
+
+            this.renderSearchResults(data.pins || []);
+        } catch (err) {
+            if (requestId !== this.searchRequestId) return;
+            this.searchResultsEl.innerHTML = '<div class="search-status">검색에 실패했습니다</div>';
+        }
+    }
+
+    renderSearchResults(pins) {
+        this.searchResultsEl.innerHTML = '';
+
+        if (pins.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'search-status';
+            empty.textContent = '일치하는 이미지가 없습니다';
+            this.searchResultsEl.appendChild(empty);
+            return;
+        }
+
+        pins.forEach((pin) => {
+            const row = document.createElement('div');
+            row.className = 'search-result-row';
+
+            const thumb = document.createElement('img');
+            thumb.className = 'search-result-thumb';
+            thumb.src = pin.image;
+            thumb.alt = '';
+            row.appendChild(thumb);
+
+            const title = document.createElement('span');
+            title.className = 'search-result-title';
+            title.textContent = pin.title && pin.title !== '제목 없음' ? pin.title : (pin.description || '');
+            row.appendChild(title);
+
+            row.addEventListener('click', () => this.showDetailPage(pin));
+            this.searchResultsEl.appendChild(row);
+        });
     }
 
     onMouseMove(event) {
+        if (!this.detailPage.classList.contains('hidden')) return;
+        if (this.searchPanel.contains(event.target) || this.searchToggle.contains(event.target)) return;
+
         this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
         this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-        
+
         // Raycaster로 호버 감지 (카드가 앞/뒤 평면 두 장으로 이루어진 그룹이라 recursive 필요)
         this.raycaster.setFromCamera(this.mouse, this.camera);
         const intersects = this.raycaster.intersectObjects(this.particleGroup.children, true);
@@ -570,14 +948,96 @@ class ParticleGallery {
     }
 
     onClick(event) {
+        // 드래그(회전 등) 끝에 발생한 클릭은 카드를 여는 클릭이 아니라 카메라 조작이었을
+        // 뿐이므로 무시한다
+        if (this.mouseDownPos) {
+            const dragDistance = Math.hypot(event.clientX - this.mouseDownPos.x, event.clientY - this.mouseDownPos.y);
+            if (dragDistance > 4) return;
+        }
+
+        // 삭제 확인 팝업이 열려 있을 때 바깥을 클릭하면 그냥 팝업만 닫는다
+        // (그 클릭이 이어서 카드를 열어버리면 혼란스러우므로 거기서 끝낸다)
+        if (!this.deleteConfirm.classList.contains('hidden')) {
+            if (!this.deleteConfirm.contains(event.target)) this.hideDeleteConfirm();
+            return;
+        }
+
         // 상세 페이지 안에서 일어난 클릭(메모 입력, 닫기 버튼 등)은
         // 카드 열기 로직과 무관하므로 무시한다.
         if (this.detailPage.contains(event.target)) return;
+        if (this.searchPanel.contains(event.target) || this.searchToggle.contains(event.target)) return;
 
         if (!this.hoveredParticle) return;
 
         const pinData = this.hoveredParticle.pinData;
         this.showDetailPage(pinData);
+    }
+
+    /**
+     * 이미지(카드) 위에서 우클릭하면 기본 브라우저 메뉴 대신 삭제 확인 팝업을 띄운다.
+     * OrbitControls가 우클릭 드래그로 화면을 이동시키는 것과는 별개로 동작한다
+     * (짧게 우클릭만 하는 경우엔 드래그가 없어 화면 이동도 눈에 띄지 않는다).
+     */
+    onContextMenu(event) {
+        if (this.detailPage.contains(event.target)) return;
+        if (this.searchPanel.contains(event.target) || this.searchToggle.contains(event.target)) return;
+        if (!this.hoveredParticle) return;
+
+        event.preventDefault();
+        this.pendingDeleteParticle = this.hoveredParticle;
+        this.showDeleteConfirm(event.clientX, event.clientY);
+    }
+
+    showDeleteConfirm(x, y) {
+        this.deleteConfirm.classList.remove('hidden');
+
+        // 화면 바깥으로 삐져나가지 않도록 위치를 보정한다
+        const rect = this.deleteConfirm.getBoundingClientRect();
+        const maxX = window.innerWidth - rect.width - 12;
+        const maxY = window.innerHeight - rect.height - 12;
+        this.deleteConfirm.style.left = `${Math.min(x, maxX)}px`;
+        this.deleteConfirm.style.top = `${Math.min(y, maxY)}px`;
+    }
+
+    hideDeleteConfirm() {
+        this.deleteConfirm.classList.add('hidden');
+        this.pendingDeleteParticle = null;
+    }
+
+    async confirmDeletePin() {
+        const particle = this.pendingDeleteParticle;
+        if (!particle) return;
+
+        this.hideDeleteConfirm();
+
+        try {
+            const response = await fetch(`/api/pins/${encodeURIComponent(particle.pinData.id)}`, {
+                method: 'DELETE'
+            });
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || '삭제 실패');
+            this.removeParticleFromScene(particle);
+        } catch (err) {
+            console.error('핀 삭제 실패:', err);
+        }
+    }
+
+    /**
+     * 삭제된 카드를 씬/배열에서 제거하고 GPU 리소스(geometry, texture, material)도 정리한다
+     */
+    removeParticleFromScene(particle) {
+        this.particleGroup.remove(particle.mesh);
+        if (particle.mesh.geometry) particle.mesh.geometry.dispose();
+        if (particle.mesh.material) {
+            if (particle.mesh.material.map) particle.mesh.material.map.dispose();
+            particle.mesh.material.dispose();
+        }
+        this.particles = this.particles.filter((p) => p !== particle);
+
+        if (this.hoveredParticle === particle) {
+            this.hoveredParticle = null;
+            this.hidePreviewPanel();
+        }
     }
 
     updatePreviewPanel(particle) {
@@ -605,6 +1065,8 @@ class ParticleGallery {
     }
 
     showDetailPage(pinData) {
+        this.trackRecentlyViewed(pinData);
+
         // 이미지가 있으면 표시, 없으면 카드와 같은 액센트 컬러 그라디언트
         const detailImg = document.getElementById('detail-image');
         const accentColor = pinData.accentColor || '#667eea';
@@ -649,12 +1111,74 @@ class ParticleGallery {
         this.detailMemo.value = pinData.memo || '';
         document.getElementById('detail-memo-status').textContent = '';
 
+        this.loadRelatedPins(pinData.id);
+
         this.layoutDetailCard();
         this.detailPage.classList.remove('hidden');
     }
 
+    /**
+     * 같은 대범주(+모노크롬/폴리크롬, 메인색)를 가진 다른 핀들을 추천해서
+     * 상세 페이지 안에서 바로 이어서 둘러볼 수 있게 한다.
+     */
+    async loadRelatedPins(pinId) {
+        const container = document.getElementById('detail-related');
+        const requestId = ++this.relatedRequestId;
+        container.innerHTML = '<div class="detail-related-status">불러오는 중...</div>';
+
+        try {
+            const response = await fetch(`/api/pins/${encodeURIComponent(pinId)}/related?limit=12`);
+            const data = await response.json();
+            if (requestId !== this.relatedRequestId) return;
+
+            const pins = data.pins || [];
+            container.innerHTML = '';
+
+            if (pins.length === 0) {
+                container.innerHTML = '<div class="detail-related-status">관련 이미지가 없습니다</div>';
+                return;
+            }
+
+            pins.forEach((pin) => {
+                const thumb = document.createElement('img');
+                thumb.className = 'detail-related-thumb';
+                thumb.src = pin.image;
+                thumb.alt = '';
+                thumb.addEventListener('click', () => this.showDetailPage(pin));
+                container.appendChild(thumb);
+            });
+        } catch (err) {
+            if (requestId !== this.relatedRequestId) return;
+            container.innerHTML = '';
+        }
+    }
+
     closeDetailPage() {
         this.detailPage.classList.add('hidden');
+    }
+
+    /**
+     * 자세히 본 핀을 로컬스토리지에 기록해둔다.
+     * 메인 페이지의 상단 필름스트립이 같은 브라우저에서 최근 클릭한 이미지를
+     * 우선적으로 보여줄 때 사용한다 (index.html/landing.js가 같은 키를 읽음).
+     */
+    trackRecentlyViewed(pinData) {
+        if (!pinData.image) return;
+        try {
+            const key = 'recentlyViewedPins';
+            let list = JSON.parse(localStorage.getItem(key) || '[]');
+            list = list.filter((p) => p.id !== pinData.id);
+            list.unshift({
+                id: pinData.id,
+                image: pinData.image,
+                description: pinData.description || '',
+                category: pinData.category || null,
+                mainColor: pinData.mainColor || null
+            });
+            localStorage.setItem(key, JSON.stringify(list.slice(0, 30)));
+        } catch (err) {
+            // 프라이빗 모드 등으로 localStorage를 못 쓰면 그냥 건너뛴다
+        }
     }
 
     /**
@@ -818,33 +1342,96 @@ class ParticleGallery {
         }
     }
 
+    /**
+     * 마우스 커서와 정확히 같은 위치에서(오프셋/지연 없이), 우측 상단 검색 버튼 쪽을
+     * 항상 가리키는 화살표를 매 프레임 갱신한다. 실제 OS 커서는 CSS로 숨겨두고
+     * 이 화살표가 커서 역할을 대신한다. 상세 페이지가 열려 있거나 검색 패널/버튼
+     * 위에 커서가 있을 땐 굳이 가리킬 필요가 없으니 숨긴다.
+     */
+    updateSearchPointer() {
+        if (!this.searchPointer) return;
+
+        this.pointerPos.x = this.pointerTarget.x;
+        this.pointerPos.y = this.pointerTarget.y;
+
+        const anchorX = this.pointerPos.x;
+        const anchorY = this.pointerPos.y;
+
+        const rect = this.searchToggle.getBoundingClientRect();
+        const targetX = rect.left + rect.width / 2;
+        const targetY = rect.top + rect.height / 2;
+
+        const rawAngle = Math.atan2(targetY - anchorY, targetX - anchorX) * 180 / Math.PI;
+
+        // 각도가 -180/180 경계를 넘나들 때 CSS transition이 반대 방향으로 크게
+        // 돌아버리는 것을 막기 위해, 이전 각도를 기준으로 가장 가까운 방향으로만 보정한다
+        let delta = rawAngle - (this.pointerAngle % 360);
+        while (delta > 180) delta -= 360;
+        while (delta < -180) delta += 360;
+        this.pointerAngle += delta;
+
+        this.searchPointer.style.left = `${anchorX}px`;
+        this.searchPointer.style.top = `${anchorY}px`;
+        this.searchPointer.style.transform = `translate(-50%, -50%) rotate(${this.pointerAngle}deg)`;
+
+        // 첫 방문 힌트가 떠 있는 동안, 화살표가 가리키는 방향으로 조금 더 나간 자리에
+        // "SEARCH →" 라벨을 같이 따라다니게 한다
+        if (this.showPointerHint) {
+            const rad = this.pointerAngle * Math.PI / 180;
+            this.searchPointerHint.style.left = `${anchorX + Math.cos(rad) * 45}px`;
+            this.searchPointerHint.style.top = `${anchorY + Math.sin(rad) * 45}px`;
+        }
+
+        // 실제 커서가 검색 버튼/패널 위에 있거나 상세 페이지가 열려 있으면 굳이 가리킬
+        // 필요가 없으니 숨긴다
+        const cursorEl = document.elementFromPoint(this.pointerTarget.x, this.pointerTarget.y);
+        const overSearchUi = !!cursorEl && (this.searchToggle.contains(cursorEl) || this.searchPanel.contains(cursorEl));
+        const shouldShow = this.pointerHasMoved
+            && this.detailPage.classList.contains('hidden')
+            && !overSearchUi;
+        this.searchPointer.classList.toggle('visible', shouldShow);
+    }
+
     animate() {
         requestAnimationFrame(() => this.animate());
 
-        // 호버 여부와 상관없이 터널 안쪽으로 항상 서서히 전진한다
-        // (카드를 살펴보다가 클릭하는 동안에도 멈추지 않고 계속 흘러감)
-        this.camera.position.z -= this.driftSpeed;
-        this.controls.target.z -= this.driftSpeed;
+        this.updateSearchPointer();
 
-        // 카메라를 지나쳐 뒤로 빠진 카드는 터널 맨 앞쪽으로 되돌려서
-        // 끝없이 이어지는 아카이브처럼 보이게 한다 (무한 루프 터널)
-        this.particles.forEach((particle) => {
-            if (particle.position.z > this.camera.position.z + 4) {
-                particle.baseZ -= this.tunnelDepth;
-                particle.position.z -= this.tunnelDepth;
-                particle.mesh.position.z = particle.position.z;
-            }
-        });
+        // 입장 연출이 재생되는 동안은 카메라를 그쪽에서 전담하므로 평소 전진/컨트롤 갱신은 건너뛴다
+        if (!this.introPlaying) {
+            // 빈 배경을 좌클릭하고 있는 동안 목표 배속으로 서서히 가속/감속한다
+            const targetDriftMultiplier = this.driftBoostActive ? 6 : 1;
+            this.driftBoostMultiplier += (targetDriftMultiplier - this.driftBoostMultiplier) * 0.08;
 
-        // 배경 먼지 조각도 같이 흘러가다가 뒤로 빠지면 앞쪽으로 되돌린다
-        const dustDepth = this.tunnelDepth * 1.4;
-        this.backgroundDust.forEach((dust) => {
-            if (dust.mesh.position.z > this.camera.position.z + 4) {
-                dust.mesh.position.z -= dustDepth;
-            }
-            dust.mesh.rotation.x += dust.spinX;
-            dust.mesh.rotation.y += dust.spinY;
-        });
+            // 호버 여부와 상관없이 터널 안쪽으로 항상 서서히 전진한다
+            // (카드를 살펴보다가 클릭하는 동안에도 멈추지 않고 계속 흘러감)
+            const drift = this.driftSpeed * this.driftBoostMultiplier;
+            this.camera.position.z -= drift;
+            this.controls.target.z -= drift;
+
+            // 카메라를 지나쳐 뒤로 빠진 카드는 터널 맨 앞쪽으로 되돌려서
+            // 끝없이 이어지는 아카이브처럼 보이게 한다 (무한 루프 터널)
+            this.particles.forEach((particle) => {
+                if (particle.position.z > this.camera.position.z + 4) {
+                    particle.baseZ -= this.tunnelDepth;
+                    particle.position.z -= this.tunnelDepth;
+                    particle.mesh.position.z = particle.position.z;
+                }
+            });
+
+            // 배경 먼지 조각도 같이 흘러가다가 뒤로 빠지면 앞쪽으로 되돌린다
+            const dustDepth = this.tunnelDepth * 1.4;
+            this.backgroundDust.forEach((dust) => {
+                if (dust.mesh.position.z > this.camera.position.z + 4) {
+                    dust.mesh.position.z -= dustDepth;
+                }
+                dust.mesh.rotation.x += dust.spinX;
+                dust.mesh.rotation.y += dust.spinY;
+            });
+
+            // 사용자가 드래그/휠로 자유롭게 시점을 바꿀 수 있도록 컨트롤 갱신
+            this.controls.update();
+        }
 
         // 호버되지 않은 카드의 스케일을 천천히 원래대로 복원
         this.particles.forEach((particle) => {
@@ -852,9 +1439,6 @@ class ParticleGallery {
                 particle.mesh.scale.lerp(new THREE.Vector3(1, 1, 1), 0.08);
             }
         });
-
-        // 사용자가 드래그/휠로 자유롭게 시점을 바꿀 수 있도록 컨트롤 갱신
-        this.controls.update();
 
         this.renderer.render(this.scene, this.camera);
     }

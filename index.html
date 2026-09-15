@@ -3,51 +3,45 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pinterest 파티클 갤러리</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Pinterest Archive</title>
+    <link rel="stylesheet" href="landing.css">
 </head>
 <body>
-    <div id="canvas-container"></div>
-    
-    <!-- 마우스 위치 추적 미리보기 패널 -->
-    <div id="preview-panel" class="preview-panel">
-        <img id="preview-image" src="" alt="Preview">
-        <div id="preview-info" class="preview-info">
-            <p id="preview-title" class="preview-title"></p>
-            <p id="preview-description" class="preview-description"></p>
-        </div>
-    </div>
-
-    <!-- 상세 페이지 (뒤로 블러된 터널이 계속 움직이는 게 보이는 오버레이 카드) -->
-    <div id="detail-page" class="detail-page hidden">
-        <div class="detail-card">
-            <button id="detail-close" class="detail-close" aria-label="닫기">&times;</button>
-            <div class="detail-image-half">
-                <img id="detail-image" src="" alt="">
+    <div class="landing">
+        <section class="landing-banner">
+            <div class="marquee-viewport">
+                <div class="marquee-track" id="marquee-track"></div>
             </div>
-            <div id="detail-info-half" class="detail-info-half">
-                <p class="detail-description" id="detail-description"></p>
+            <div class="banner-overlay">
+                <h1 class="banner-title">PINTEREST<br>ARCHIVE</h1>
+            </div>
+            <div class="banner-meta">
+                <span id="pin-count">— pins</span>
+                <span class="banner-dot">●</span>
+                <span id="banner-date"></span>
+            </div>
+            <span class="banner-eye" aria-hidden="true">◉</span>
+        </section>
 
-                <div class="detail-section">
-                    <label class="detail-label" for="detail-tag-input">KEYWORDS</label>
-                    <div class="detail-tags" id="detail-tags"></div>
-                    <input id="detail-tag-input" class="detail-tag-input" type="text" placeholder="키워드를 입력하고 Enter">
+        <section class="landing-lower">
+            <div class="lower-left">
+                <span class="vertical-label">Archive*</span>
+                <a href="gallery.html" class="enter-link">ENTER THE<br>TUNNEL →</a>
+            </div>
+            <div class="lower-right">
+                <div class="archive-index">
+                    <div class="archive-index-header">ARCHIVE INDEX</div>
+                    <div class="archive-index-list" id="index-list"></div>
                 </div>
 
-                <div class="detail-section">
-                    <label class="detail-label" for="detail-memo">MY NOTE</label>
-                    <textarea id="detail-memo" class="detail-memo" placeholder="이 이미지에 대한 메모를 남겨보세요..."></textarea>
-                    <div class="detail-memo-status" id="detail-memo-status"></div>
+                <div class="landing-links">
+                    <a href="https://www.pinterest.com" target="_blank" rel="noopener">Pinterest</a>
+                    <a href="gallery.html">Tunnel</a>
                 </div>
-
-                <a id="detail-link" class="detail-link" href="#" target="_blank" rel="noopener">Pinterest에서 보기 →</a>
             </div>
-        </div>
+        </section>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="data.js"></script>
-    <script src="script.js" crossorigin="anonymous"></script>
+    <script src="landing.js"></script>
 </body>
 </html>

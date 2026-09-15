@@ -2,13 +2,37 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    /* OS 커서 대신 화면을 따라다니는 파란 화살표(.search-pointer)가 커서 역할을 한다 */
+    cursor: none !important;
 }
 
 body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
     background: linear-gradient(135deg, #f5f5f5 0%, #ffffff 100%);
     overflow: hidden;
     height: 100vh;
+}
+
+/* <button>은 appearance:none 없이는 일부 브라우저(특히 Safari)가 font-family
+   지정을 무시하고 OS 기본 시스템 폰트로 그려버린다 - SEARCH 버튼이 다른 곳과
+   다른 타입페이스로 보이던 원인이 바로 이것이었다 */
+button {
+    font: inherit;
+    appearance: none;
+    -webkit-appearance: none;
+    background: none;
+    border: none;
+}
+
+/* 화살표는 검색 버튼/패널 위나 상세 페이지가 열려 있을 땐 일부러 숨는다
+   (updateSearchPointer 참고) - 그 동안 아무 커서도 안 보이면 곤란하니
+   그 영역에서만 원래 OS 커서를 되살린다 */
+.search-toggle,
+.search-panel,
+.search-panel *,
+.detail-page,
+.detail-page * {
+    cursor: auto !important;
 }
 
 #canvas-container {
@@ -20,6 +44,341 @@ body {
 canvas {
     display: block;
 }
+
+/* 메인 페이지로 돌아가는 링크 */
+.back-home-link {
+    position: fixed;
+    top: 24px;
+    left: 24px;
+    z-index: 50;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #333;
+    text-decoration: none;
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(6px);
+    padding: 10px 16px;
+    border-radius: 20px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.back-home-link:hover {
+    background: #fff;
+    transform: translateX(-2px);
+}
+
+/* 터널 안 키워드 태그 검색 */
+.search-toggle {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 50;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #333;
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(6px);
+    border: none;
+    cursor: pointer;
+    padding: 10px 16px;
+    border-radius: 20px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.search-toggle:hover {
+    background: #fff;
+    transform: translateX(-2px);
+}
+
+.search-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.search-toggle-key {
+    font-size: 10px;
+    font-weight: 700;
+    color: #999;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 4px;
+    padding: 1px 5px;
+    line-height: 1.4;
+}
+
+.search-toggle.pulse {
+    animation: search-toggle-pulse 1.4s ease-in-out 3;
+}
+
+@keyframes search-toggle-pulse {
+    0%, 100% {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+        transform: scale(1);
+    }
+    50% {
+        box-shadow: 0 4px 22px rgba(58, 62, 242, 0.3), 0 0 0 6px rgba(58, 62, 242, 0.12);
+        transform: scale(1.06);
+    }
+}
+
+/* 마우스 커서를 따라다니며 검색 버튼 쪽을 항상 가리키는 화살표.
+   단순 삼각형(➤)은 방향을 가리키는 느낌이 약해서, 뒤가 오목하게 파인 GPS/나침반
+   스타일의 다트 모양 SVG로 바꿔서 "이 방향을 가리키고 있다"는 지시성을 강조한다.
+   메인 페이지 파란 배너와 같은 파란색을 써서 같은 계열의 요소임을 암시한다 */
+.search-pointer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    /* SEARCH/ARCHIVE 버튼(z-index:50)에 다가갔을 때 화살표가 그 뒤로 숨어버리면
+       어색하므로, 항상 그 위에 그려지도록 더 높은 값을 준다 */
+    z-index: 55;
+    width: 60px;
+    height: 60px;
+    color: #3a3ef2;
+    pointer-events: none;
+    opacity: 0;
+    filter: drop-shadow(0 2px 10px rgba(58, 62, 242, 0.6));
+    transition: opacity 0.25s ease, transform 0.15s ease-out;
+}
+
+.search-pointer-svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+}
+
+.search-pointer.visible {
+    opacity: 1;
+}
+
+/* 처음 방문 시 화살표와 검색 버튼이 같이 펄스할 때, 화살표가 가리키는 방향으로
+   같이 나타나는 짧은 텍스트 힌트 - "이 화살표 = 저기 검색 있음"을 명시적으로 알려준다 */
+.search-pointer-hint {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 56;
+    transform: translate(-50%, -50%);
+    background: #3a3ef2;
+    color: #fff;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+    padding: 7px 14px;
+    border-radius: 20px;
+    box-shadow: 0 4px 18px rgba(58, 62, 242, 0.5);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.search-pointer-hint.visible {
+    opacity: 1;
+}
+
+/* 화살표 자체의 펄스 - transform은 JS가 매 프레임 위치/회전에 쓰고 있으므로
+   건드리지 않고, filter(글로우)만 애니메이션해서 서로 부딪히지 않게 한다 */
+.search-pointer.pulse {
+    animation: search-pointer-pulse 1.4s ease-in-out 3;
+}
+
+@keyframes search-pointer-pulse {
+    0%, 100% {
+        filter: drop-shadow(0 3px 16px rgba(58, 62, 242, 0.6)) brightness(1);
+    }
+    50% {
+        filter: drop-shadow(0 3px 30px rgba(58, 62, 242, 1)) brightness(1.35);
+    }
+}
+
+/* 이미지 우클릭 시 커서 옆에 뜨는 삭제 확인 팝업 */
+.delete-confirm {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 60;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+    padding: 14px;
+    width: 220px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+}
+
+.delete-confirm.hidden {
+    display: none;
+}
+
+.delete-confirm-text {
+    font-size: 12px;
+    line-height: 1.5;
+    color: #1a1a1a;
+    margin-bottom: 12px;
+}
+
+.delete-confirm-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.delete-confirm-btn {
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+}
+
+.delete-confirm-cancel {
+    background: #eee;
+    color: #333;
+}
+
+.delete-confirm-cancel:hover {
+    background: #e2e2e2;
+}
+
+.delete-confirm-delete {
+    background: #e74c3c;
+    color: #fff;
+}
+
+.delete-confirm-delete:hover {
+    background: #d33d2c;
+}
+
+.search-panel {
+    position: fixed;
+    top: 72px;
+    right: 24px;
+    z-index: 49;
+    width: 300px;
+    max-height: min(70vh, 520px);
+    display: flex;
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(10px);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    padding: 14px;
+    gap: 10px;
+}
+
+.search-panel.hidden {
+    display: none;
+}
+
+.search-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.search-tags:empty {
+    display: none;
+}
+
+.search-tag-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #1a1a1a;
+    color: #fff;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    padding: 5px 6px 5px 10px;
+    border-radius: 14px;
+}
+
+.search-tag-remove {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 2px;
+}
+
+.search-tag-remove:hover {
+    color: #fff;
+}
+
+.search-tag-input {
+    border: none;
+    border-bottom: 1px solid #ddd;
+    outline: none;
+    background: transparent;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    font-size: 13px;
+    color: #1a1a1a;
+    padding: 4px 2px;
+}
+
+.search-tag-input:focus {
+    border-bottom-color: #1a1a1a;
+}
+
+.search-results {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.search-status {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    font-size: 12px;
+    color: #999;
+    padding: 8px 2px;
+}
+
+.search-result-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 4px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.search-result-row:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.search-result-thumb {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border-radius: 6px;
+    flex-shrink: 0;
+    background: #eee;
+}
+
+.search-result-title {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #333;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
 
 /* 미리보기 패널 */
 .preview-panel {
@@ -128,7 +487,6 @@ canvas {
     overflow: hidden;
     box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
     animation: detail-card-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
 
 @keyframes detail-card-in {
@@ -148,6 +506,10 @@ canvas {
     height: 100%;
     object-fit: contain;
     display: block;
+    /* 원본 핀 이미지에 핀터레스트 페이지의 둥근 모서리가 그대로 캡처되어 있어서,
+       박스 비율이 이미지 비율과 정확히 같아 크롭이 전혀 없을 때도 그 모서리가
+       보이지 않도록 살짝 확대해서 부모의 overflow:hidden으로 잘라낸다 */
+    transform: scale(1.06);
 }
 
 .detail-info-half {
@@ -189,7 +551,6 @@ canvas {
 }
 
 .detail-description {
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
     font-weight: 400;
     font-size: clamp(20px, 2.4vw, 30px);
     line-height: 1.35;
@@ -203,7 +564,6 @@ canvas {
 }
 
 .detail-label {
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.14em;
@@ -284,7 +644,6 @@ canvas {
     border-radius: 4px;
     padding: 14px 16px;
     color: #fff;
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
     font-size: 14px;
     line-height: 1.6;
     resize: vertical;
@@ -304,6 +663,34 @@ canvas {
     opacity: 0.7;
     height: 14px;
     margin-top: -4px;
+}
+
+.detail-related {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+}
+
+.detail-related-thumb {
+    width: 64px;
+    height: 64px;
+    object-fit: cover;
+    border-radius: 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+    opacity: 0.9;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.detail-related-thumb:hover {
+    transform: scale(1.06);
+    opacity: 1;
+}
+
+.detail-related-status {
+    font-size: 12px;
+    opacity: 0.7;
 }
 
 .detail-link {

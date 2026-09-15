@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pinterest 파티클 갤러리</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <a href="index.html" class="back-home-link">← ARCHIVE</a>
+
+    <!-- 터널 안에서 키워드를 태그처럼 추가하며 좁혀가는 검색 패널 -->
+    <button id="search-toggle" class="search-toggle" aria-label="검색">
+        <span class="search-toggle-label">SEARCH</span>
+        <span class="search-toggle-key">/</span>
+    </button>
+    <div id="search-panel" class="search-panel hidden">
+        <div class="search-tags" id="search-tags"></div>
+        <input id="search-tag-input" class="search-tag-input" type="text" placeholder="키워드 입력 후 Enter">
+        <div class="search-results" id="search-results"></div>
+    </div>
+
+    <!-- 마우스 커서를 따라다니며 우측 상단 검색 버튼 쪽을 항상 가리키는 화살표 -->
+    <!-- 0도 회전일 때 오른쪽(+X)을 가리키도록 그렸다 - script.js의 각도 계산이
+         "0도 = 오른쪽"을 기준으로 하기 때문 -->
+    <div id="search-pointer" class="search-pointer" aria-hidden="true">
+        <svg viewBox="0 0 100 100" class="search-pointer-svg">
+            <path d="M98 50 L6 6 L28 50 L6 94 Z" />
+        </svg>
+    </div>
+
+    <!-- 처음 방문 시 한 번, 화살표가 검색 버튼을 가리킨다는 걸 명시적으로 알려주는 힌트 -->
+    <div id="search-pointer-hint" class="search-pointer-hint hidden">SEARCH →</div>
+
+    <!-- 이미지 우클릭 시 뜨는 삭제 확인 팝업 -->
+    <div id="delete-confirm" class="delete-confirm hidden">
+        <p class="delete-confirm-text">이 핀을 아카이브에서 삭제할까요?</p>
+        <div class="delete-confirm-actions">
+            <button id="delete-confirm-cancel" class="delete-confirm-btn delete-confirm-cancel">취소</button>
+            <button id="delete-confirm-delete" class="delete-confirm-btn delete-confirm-delete">삭제</button>
+        </div>
+    </div>
+
+    <!-- 마우스 위치 추적 미리보기 패널 -->
+    <div id="preview-panel" class="preview-panel">
+        <img id="preview-image" src="" alt="Preview">
+        <div id="preview-info" class="preview-info">
+            <p id="preview-title" class="preview-title"></p>
+            <p id="preview-description" class="preview-description"></p>
+        </div>
+    </div>
+
+    <!-- 상세 페이지 (뒤로 블러된 터널이 계속 움직이는 게 보이는 오버레이 카드) -->
+    <div id="detail-page" class="detail-page hidden">
+        <div class="detail-card">
+            <button id="detail-close" class="detail-close" aria-label="닫기">&times;</button>
+            <div class="detail-image-half">
+                <img id="detail-image" src="" alt="">
+            </div>
+            <div id="detail-info-half" class="detail-info-half">
+                <p class="detail-description" id="detail-description"></p>
+
+                <div class="detail-section">
+                    <label class="detail-label" for="detail-tag-input">KEYWORDS</label>
+                    <div class="detail-tags" id="detail-tags"></div>
+                    <input id="detail-tag-input" class="detail-tag-input" type="text" placeholder="키워드를 입력하고 Enter">
+                </div>
+
+                <div class="detail-section">
+                    <label class="detail-label" for="detail-memo">MY NOTE</label>
+                    <textarea id="detail-memo" class="detail-memo" placeholder="이 이미지에 대한 메모를 남겨보세요..."></textarea>
+                    <div class="detail-memo-status" id="detail-memo-status"></div>
+                </div>
+
+                <div class="detail-section">
+                    <label class="detail-label">RELATED</label>
+                    <div class="detail-related" id="detail-related"></div>
+                </div>
+
+                <a id="detail-link" class="detail-link" href="#" target="_blank" rel="noopener">Pinterest에서 보기 →</a>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="data.js"></script>
+    <script src="script.js" crossorigin="anonymous"></script>
+</body>
+</html>

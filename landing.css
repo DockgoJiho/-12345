@@ -1,0 +1,290 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    overflow: hidden;
+}
+
+.landing {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── 상단 배너: 실제 핀 이미지가 한 방향으로 계속 흘러가는 필름스트립.
+   참고 이미지처럼 이미지가 화면 대부분을 차지하고, 하단 정보 영역은 얇은 띠 정도로만
+   남도록 면적 비율을 크게 잡는다 ── */
+.landing-banner {
+    position: relative;
+    flex: 0 0 78vh;
+    background: #3a3ef2;
+    overflow: hidden;
+}
+
+.marquee-viewport {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+
+.marquee-track {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 14px;
+    will-change: transform;
+    animation: marquee-scroll 90s linear infinite;
+}
+
+@keyframes marquee-scroll {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+}
+
+/* 마퀴 카드: 프레임 없이 이미지 자체만 있고, 호버하는 동안 계속 360도로 회전하다가
+   커서가 빠지면 정면(다음 360도 배수)까지 감속하며 멈춘다. 실제 회전 각도는
+   landing.js가 매 프레임 style.transform으로 직접 계산해 넣는다(JS 구동) - CSS
+   애니메이션만으로는 "멈출 때 정면에서 자연스럽게 서는" 감속을 표현하기 어렵기 때문이다.
+   transform에는 perspective()를 함수값으로만 써서(부모에 perspective/preserve-3d를
+   영구 선언하지 않음) 계속 흘러가는 트랙의 애니메이션이 멈추는 과거 문제를 피한다. */
+.marquee-card {
+    position: relative;
+    height: 78%;
+    width: auto;
+    flex-shrink: 0;
+    display: block;
+    overflow: hidden;
+    border-radius: 6px;
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.16);
+}
+
+/* 원본 핀 이미지 자체에 핀터레스트 페이지의 둥근 모서리가 그대로 캡처되어 있어서
+   (배경색이 비쳐 보이는 흰 모서리로 남음), 이미지를 살짝 확대해서 그 모서리가
+   보이는 영역 밖으로 밀어내고 카드 자체의 overflow:hidden으로 잘라낸다 */
+.marquee-card-img {
+    height: 100%;
+    width: auto;
+    display: block;
+    filter: saturate(1.05);
+    transform: perspective(900px) scale(1.1) rotateY(0deg);
+}
+
+.banner-overlay {
+    position: absolute;
+    left: 5vw;
+    bottom: 6vh;
+    pointer-events: none;
+}
+
+.banner-title {
+    color: #111;
+    background: #fff;
+    display: inline;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-weight: 800;
+    font-size: clamp(40px, 7vw, 96px);
+    line-height: 1.02;
+    letter-spacing: -0.02em;
+    padding: 0 10px;
+}
+
+.banner-meta {
+    position: absolute;
+    top: 24px;
+    right: 28px;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    opacity: 0.9;
+}
+
+.banner-dot {
+    color: #ff4433;
+    font-size: 9px;
+    animation: blink 1.6s ease-in-out infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+}
+
+.banner-eye {
+    position: absolute;
+    bottom: 20px;
+    right: 28px;
+    color: #fff;
+    font-size: 22px;
+    opacity: 0.85;
+}
+
+/* ── 하단: 왼쪽 진입 버튼 / 오른쪽 설명 ── */
+.landing-lower {
+    flex: 1 1 auto;
+    display: flex;
+    min-height: 0;
+}
+
+.lower-left {
+    position: relative;
+    flex: 0 0 38%;
+    background: #fff;
+    border-right: 1px solid #eee;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.vertical-label {
+    position: absolute;
+    left: 20px;
+    top: 50%;
+    transform: translateY(-50%) rotate(180deg);
+    writing-mode: vertical-rl;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    color: #999;
+}
+
+.enter-link {
+    color: #ff4433;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: clamp(18px, 2vw, 30px);
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    text-align: center;
+    transition: opacity 0.2s ease;
+}
+
+.enter-link:hover {
+    opacity: 0.7;
+}
+
+.lower-right {
+    flex: 1 1 auto;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 12px 40px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+
+/* ── ARCHIVE INDEX: 박스나 배경 없이, 모노스페이스(디지털) 타입으로만
+   나열하는 순수 텍스트 인덱스 */
+.archive-index {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.archive-index-header {
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #1a1a1a;
+    margin-bottom: 4px;
+}
+
+.archive-index-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.index-row {
+    display: grid;
+    grid-template-columns: 24px 1fr 40px;
+    gap: 16px;
+    padding: 1px 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #1a1a1a;
+    text-decoration: none;
+    cursor: pointer;
+    transition: opacity 0.15s ease;
+}
+
+.index-row:hover {
+    opacity: 0.55;
+}
+
+.index-row .index-num,
+.index-row .index-count {
+    color: #999;
+    font-variant-numeric: tabular-nums;
+}
+
+.index-row .index-count {
+    text-align: right;
+}
+
+.index-row .index-name {
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.landing-links {
+    display: flex;
+    gap: 20px;
+}
+
+.landing-links a {
+    color: #999;
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    border-bottom: 1px solid transparent;
+}
+
+.landing-links a:hover {
+    color: #111;
+    border-bottom-color: #111;
+}
+
+@media (max-width: 768px) {
+    .landing-lower {
+        flex-direction: column;
+        overflow-y: auto;
+    }
+    .lower-left {
+        flex: 0 0 auto;
+        border-right: none;
+        border-bottom: 1px solid #eee;
+        padding: 32px 24px;
+    }
+    .lower-right {
+        padding: 28px 24px;
+    }
+    .vertical-label {
+        display: none;
+    }
+}
