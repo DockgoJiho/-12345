@@ -484,18 +484,84 @@ canvas {
 .detail-card {
     position: relative;
     display: flex;
+    flex-direction: column;
     /* 실제 크기는 JS가 이미지의 원본 비율을 보고 매번 계산해서 인라인으로 지정한다 */
     width: min(1100px, 90vw);
     height: min(720px, 86vh);
-    border-radius: 18px;
+    background: #fdfdfc;
+    border: 1px solid #ccc;
+    border-radius: 9px;
     overflow: hidden;
-    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.28);
     animation: detail-card-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 @keyframes detail-card-in {
     0% { transform: scale(0.92); opacity: 0; }
     100% { transform: scale(1); opacity: 1; }
+}
+
+/* 오래된 브라우저 창 상단 바를 흉내낸 무채색 크롬 - 신호등 점은 색을 쓰지 않고
+   위치/모양만으로 "브라우저 창"이라는 느낌을 준다 */
+.detail-browser-bar {
+    flex: 0 0 40px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 0 14px;
+    background: #ececea;
+    border-bottom: 1px solid #d4d4d2;
+}
+
+.detail-browser-dots {
+    display: flex;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.detail-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #cfcfcc;
+    border: 1px solid #b7b7b3;
+    padding: 0;
+    display: block;
+}
+
+.detail-dot-close {
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.detail-dot-close:hover {
+    background: #9a9a96;
+}
+
+.detail-browser-url {
+    flex: 1 1 auto;
+    display: flex;
+    justify-content: center;
+}
+
+.detail-browser-url span {
+    background: #fff;
+    border: 1px solid #d4d4d2;
+    border-radius: 5px;
+    padding: 4px 16px;
+    font-size: 11px;
+    color: #888;
+    letter-spacing: 0.02em;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.detail-body {
+    flex: 1 1 auto;
+    display: flex;
+    min-height: 0;
 }
 
 .detail-image-half {
@@ -519,39 +585,14 @@ canvas {
 .detail-info-half {
     /* 이미지 비율과 무관하게 항상 일정한 폭을 유지하는 정보 패널 */
     flex: 0 0 auto;
-    background: #667eea; /* JS에서 카드의 액센트 컬러로 덮어씀 */
-    color: #fff;
+    background: #fdfdfc;
+    color: #171717;
     display: flex;
     flex-direction: column;
     justify-content: center;
     gap: 26px;
     padding: 52px;
     overflow-y: auto;
-}
-
-.detail-close {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-    background: rgba(255, 255, 255, 0.2);
-    border: none;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    font-size: 26px;
-    line-height: 1;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1001;
-    color: #fff;
-    transition: all 0.2s ease;
-}
-
-.detail-close:hover {
-    background: rgba(255, 255, 255, 0.35);
-    transform: rotate(90deg);
 }
 
 .detail-description {
@@ -571,7 +612,7 @@ canvas {
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.14em;
-    opacity: 0.75;
+    opacity: 0.55;
 }
 
 .detail-tags {
@@ -584,9 +625,9 @@ canvas {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(255, 255, 255, 0.18);
-    border: 1px solid rgba(255, 255, 255, 0.5);
-    color: #fff;
+    background: rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    color: #171717;
     padding: 5px 8px 5px 14px;
     border-radius: 20px;
     font-size: 12px;
@@ -595,17 +636,17 @@ canvas {
 }
 
 .detail-tags .tag.tag-auto {
-    opacity: 0.65;
+    opacity: 0.6;
     padding-right: 14px;
 }
 
 .detail-tags .tag-remove {
-    background: rgba(255, 255, 255, 0.25);
+    background: rgba(0, 0, 0, 0.1);
     border: none;
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    color: #fff;
+    color: #171717;
     font-size: 12px;
     line-height: 1;
     cursor: pointer;
@@ -616,55 +657,55 @@ canvas {
 }
 
 .detail-tags .tag-remove:hover {
-    background: rgba(255, 255, 255, 0.45);
+    background: rgba(0, 0, 0, 0.2);
 }
 
 .detail-tag-input {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.03);
     border: none;
-    border-left: 3px solid rgba(255, 255, 255, 0.6);
+    border-left: 3px solid rgba(0, 0, 0, 0.22);
     border-radius: 4px;
     padding: 10px 14px;
-    color: #fff;
+    color: #171717;
     font-family: inherit;
     font-size: 13px;
 }
 
 .detail-tag-input::placeholder {
-    color: rgba(255, 255, 255, 0.55);
+    color: rgba(0, 0, 0, 0.4);
 }
 
 .detail-tag-input:focus {
     outline: none;
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.06);
 }
 
 .detail-memo {
     width: 100%;
     min-height: 80px;
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.03);
     border: none;
-    border-left: 3px solid rgba(255, 255, 255, 0.6);
+    border-left: 3px solid rgba(0, 0, 0, 0.22);
     border-radius: 4px;
     padding: 14px 16px;
-    color: #fff;
+    color: #171717;
     font-size: 14px;
     line-height: 1.6;
     resize: vertical;
 }
 
 .detail-memo::placeholder {
-    color: rgba(255, 255, 255, 0.55);
+    color: rgba(0, 0, 0, 0.4);
 }
 
 .detail-memo:focus {
     outline: none;
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.06);
 }
 
 .detail-memo-status {
     font-size: 12px;
-    opacity: 0.7;
+    opacity: 0.55;
     height: 14px;
     margin-top: -4px;
 }
@@ -694,17 +735,17 @@ canvas {
 
 .detail-related-status {
     font-size: 12px;
-    opacity: 0.7;
+    opacity: 0.55;
 }
 
 .detail-link {
-    color: #fff;
+    color: #171717;
     font-weight: 500;
     font-size: 14px;
     text-decoration: none;
-    opacity: 0.9;
+    opacity: 0.85;
     width: fit-content;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.6);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.4);
     padding-bottom: 2px;
 }
 
@@ -714,9 +755,11 @@ canvas {
 
 @media (max-width: 768px) {
     .detail-card {
-        flex-direction: column;
         width: 92vw;
         height: 90vh;
+    }
+    .detail-body {
+        flex-direction: column;
     }
     .detail-image-half,
     .detail-info-half {

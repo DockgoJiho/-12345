@@ -798,7 +798,12 @@ class ParticleGallery {
         // 이벤트 전파를 막아 window까지 올라가지 않게 한다.
         this.searchPanel.addEventListener('click', (e) => e.stopPropagation());
         this.searchToggle.addEventListener('click', (e) => e.stopPropagation());
-        this.detailPage.addEventListener('click', (e) => e.stopPropagation());
+        // 카드 바깥(배경) 클릭만은 예외적으로 올려보내서 window의 onClick이 상세 페이지를
+        // 닫게 한다 - 카드 안쪽 클릭은 여전히 여기서 막아 위 주석의 stale-DOM 문제를 피한다.
+        this.detailPage.addEventListener('click', (e) => {
+            if (e.target === this.detailPage) return;
+            e.stopPropagation();
+        });
 
         // "/" 단축키로 검색 패널을 바로 열고 입력에 포커스 (다른 입력창에 타이핑 중일 땐 무시)
         window.addEventListener('keydown', (e) => {
@@ -962,9 +967,12 @@ class ParticleGallery {
             return;
         }
 
-        // 상세 페이지 안에서 일어난 클릭(메모 입력, 닫기 버튼 등)은
-        // 카드 열기 로직과 무관하므로 무시한다.
-        if (this.detailPage.contains(event.target)) return;
+        // 상세 페이지가 열려 있을 때: 카드 바깥(뒷배경)을 클릭하면 닫고,
+        // 카드 안쪽 클릭(메모 입력, 닫기 버튼 등)은 카드 열기 로직과 무관하므로 무시한다.
+        if (this.detailPage.contains(event.target)) {
+            if (event.target === this.detailPage) this.closeDetailPage();
+            return;
+        }
         if (this.searchPanel.contains(event.target) || this.searchToggle.contains(event.target)) return;
 
         // this.hoveredParticle은 가장 최근 mousemove 시점 기준이라, 상세 페이지를 닫자마자
@@ -1078,9 +1086,8 @@ class ParticleGallery {
     showDetailPage(pinData) {
         this.trackRecentlyViewed(pinData);
 
-        // 이미지가 있으면 표시, 없으면 카드와 같은 액센트 컬러 그라디언트
+        // 이미지가 있으면 표시, 없으면 무채색 플레이스홀더
         const detailImg = document.getElementById('detail-image');
-        const accentColor = pinData.accentColor || '#667eea';
         detailImg.style.background = 'none';
 
         // 이미지의 원본 비율을 알기 전까지는 기본 비율로 카드를 잡아둔다
@@ -1092,16 +1099,27 @@ class ParticleGallery {
                 this.layoutDetailCard();
             };
             detailImg.onerror = () => {
-                detailImg.style.background = `linear-gradient(135deg, ${accentColor} 0%, #222 100%)`;
+                detailImg.style.background = '#3a3a3a';
             };
             detailImg.src = pinData.image;
         } else {
             detailImg.removeAttribute('src');
-            detailImg.style.background = `linear-gradient(135deg, ${accentColor} 0%, #222 100%)`;
+            detailImg.style.background = '#3a3a3a';
         }
 
-        document.getElementById('detail-info-half').style.background = accentColor;
         document.getElementById('detail-description').textContent = pinData.description;
+
+        // 상단 바를 실제 브라우저 주소창처럼 보이게, 핀의 링크에서 도메인을 뽑아 보여준다
+        const urlEl = document.getElementById('detail-browser-url');
+        if (pinData.link) {
+            try {
+                urlEl.textContent = new URL(pinData.link).hostname.replace(/^www\./, '');
+            } catch (err) {
+                urlEl.textContent = 'pinterest.com';
+            }
+        } else {
+            urlEl.textContent = 'archive.local';
+        }
 
         const linkEl = document.getElementById('detail-link');
         if (pinData.link) {
@@ -1206,15 +1224,17 @@ class ParticleGallery {
         const card = document.querySelector('.detail-card');
         const imageHalf = document.querySelector('.detail-image-half');
         const infoHalf = document.getElementById('detail-info-half');
+        // 브라우저 창 흉내를 낸 상단 바의 높이 - style.css의 .detail-browser-bar와 값을 맞춰야 한다
+        const barHeight = 40;
 
         if (window.innerWidth < 768) {
             // 좁은 화면: 이미지 위, 정보 패널 아래로 쌓는다
             const cardWidth = window.innerWidth * 0.92;
             const cardHeight = window.innerHeight * 0.9;
-            const infoHeight = Math.min(260, cardHeight * 0.4);
-            const imageHeight = cardHeight - infoHeight;
+            const bodyHeight = cardHeight - barHeight;
+            const infoHeight = Math.min(260, bodyHeight * 0.4);
+            const imageHeight = bodyHeight - infoHeight;
 
-            card.style.flexDirection = 'column';
             card.style.width = `${cardWidth}px`;
             card.style.height = `${cardHeight}px`;
             imageHalf.style.flexBasis = `${imageHeight}px`;
@@ -1222,12 +1242,10 @@ class ParticleGallery {
             return;
         }
 
-        card.style.flexDirection = 'row';
-
         // 정보 패널: 이미지 비율과 무관하게 항상 같은 폭 (화면 크기에 맞춰 살짝만 조정)
         const infoWidth = Math.min(420, Math.max(320, window.innerWidth * 0.26));
         const maxCardWidth = window.innerWidth * 0.94;
-        const maxCardHeight = window.innerHeight * 0.88;
+        const maxCardHeight = window.innerHeight * 0.88 - barHeight;
         const maxImageWidth = Math.max(280, maxCardWidth - infoWidth);
 
         // 이미지는 원본 비율을 유지한 채, 세로 기준으로 최대한 키우고
@@ -1240,7 +1258,7 @@ class ParticleGallery {
         }
 
         card.style.width = `${imageWidth + infoWidth}px`;
-        card.style.height = `${imageHeight}px`;
+        card.style.height = `${imageHeight + barHeight}px`;
         imageHalf.style.flexBasis = `${imageWidth}px`;
         infoHalf.style.flexBasis = `${infoWidth}px`;
     }

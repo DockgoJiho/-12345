@@ -27,7 +27,7 @@
          "0도 = 오른쪽"을 기준으로 하기 때문 -->
     <div id="search-pointer" class="search-pointer" aria-hidden="true">
         <svg viewBox="0 0 100 100" class="search-pointer-svg">
-            <path d="M98 50 L6 6 L28 50 L6 94 Z" />
+            <path d="M97 50 L58 11 L40 11 L72 43 L3 43 L3 57 L72 57 L40 89 L58 89 Z" />
         </svg>
     </div>
 
@@ -52,34 +52,44 @@
         </div>
     </div>
 
-    <!-- 상세 페이지 (뒤로 블러된 터널이 계속 움직이는 게 보이는 오버레이 카드) -->
+    <!-- 상세 페이지: 오래된 브라우저 창을 그대로 캡처한 듯한 무채색 인터페이스.
+         상단 바의 첫 번째 점(dot)이 실제 닫기 버튼 역할을 한다(맥 창의 빨간 버튼처럼) -->
     <div id="detail-page" class="detail-page hidden">
         <div class="detail-card">
-            <button id="detail-close" class="detail-close" aria-label="닫기">&times;</button>
-            <div class="detail-image-half">
-                <img id="detail-image" src="" alt="">
+            <div class="detail-browser-bar">
+                <div class="detail-browser-dots">
+                    <button id="detail-close" class="detail-dot detail-dot-close" aria-label="닫기"></button>
+                    <span class="detail-dot"></span>
+                    <span class="detail-dot"></span>
+                </div>
+                <div class="detail-browser-url"><span id="detail-browser-url">pinterest.com</span></div>
             </div>
-            <div id="detail-info-half" class="detail-info-half">
-                <p class="detail-description" id="detail-description"></p>
-
-                <div class="detail-section">
-                    <label class="detail-label" for="detail-tag-input">KEYWORDS</label>
-                    <div class="detail-tags" id="detail-tags"></div>
-                    <input id="detail-tag-input" class="detail-tag-input" type="text" placeholder="키워드를 입력하고 Enter">
+            <div class="detail-body">
+                <div class="detail-image-half">
+                    <img id="detail-image" src="" alt="">
                 </div>
+                <div id="detail-info-half" class="detail-info-half">
+                    <p class="detail-description" id="detail-description"></p>
 
-                <div class="detail-section">
-                    <label class="detail-label" for="detail-memo">MY NOTE</label>
-                    <textarea id="detail-memo" class="detail-memo" placeholder="이 이미지에 대한 메모를 남겨보세요..."></textarea>
-                    <div class="detail-memo-status" id="detail-memo-status"></div>
+                    <div class="detail-section">
+                        <label class="detail-label" for="detail-tag-input">KEYWORDS</label>
+                        <div class="detail-tags" id="detail-tags"></div>
+                        <input id="detail-tag-input" class="detail-tag-input" type="text" placeholder="키워드를 입력하고 Enter">
+                    </div>
+
+                    <div class="detail-section">
+                        <label class="detail-label" for="detail-memo">MY NOTE</label>
+                        <textarea id="detail-memo" class="detail-memo" placeholder="이 이미지에 대한 메모를 남겨보세요..."></textarea>
+                        <div class="detail-memo-status" id="detail-memo-status"></div>
+                    </div>
+
+                    <div class="detail-section">
+                        <label class="detail-label">RELATED</label>
+                        <div class="detail-related" id="detail-related"></div>
+                    </div>
+
+                    <a id="detail-link" class="detail-link" href="#" target="_blank" rel="noopener">Pinterest에서 보기 →</a>
                 </div>
-
-                <div class="detail-section">
-                    <label class="detail-label">RELATED</label>
-                    <div class="detail-related" id="detail-related"></div>
-                </div>
-
-                <a id="detail-link" class="detail-link" href="#" target="_blank" rel="noopener">Pinterest에서 보기 →</a>
             </div>
         </div>
     </div>
