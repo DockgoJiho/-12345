@@ -37,9 +37,10 @@ class ParticleGallery {
         this.deleteConfirmDeleteBtn = document.getElementById('delete-confirm-delete');
         this.pendingDeleteParticle = null;
 
-        this.mouse = new THREE.Vector2();
         this.raycaster = new THREE.Raycaster();
         this.hoveredParticle = null;
+        // 모바일 터치: 터치 시작 지점(탭 vs 드래그 판정용) - 마우스의 mouseDownPos와 별도로 관리
+        this.touchStartPos = null;
         this.particles = [];
         this.pinsData = [];
         this.isLoading = true;
@@ -708,6 +709,13 @@ class ParticleGallery {
         window.addEventListener('resize', () => this.onWindowResize());
         window.addEventListener('contextmenu', (e) => this.onContextMenu(e));
 
+        // 모바일 터치: 손가락을 대고 있으면 미리보기, 짧게 탭하면 카드 열기 (touchstart/move는
+        // OrbitControls의 회전 제스처를 막지 않도록 passive로 등록하고, touchend만
+        // 합성 click을 억제해야 해서 passive가 아니게 등록한다)
+        window.addEventListener('touchstart', (e) => this.onTouchStart(e), { passive: true });
+        window.addEventListener('touchmove', (e) => this.onTouchMove(e), { passive: true });
+        window.addEventListener('touchend', (e) => this.onTouchEnd(e));
+
         // Shift를 누르고 있는 동안엔 가운데 버튼 드래그가 줌(DOLLY) 대신 이동(PAN)으로 바뀐다
         // (블렌더의 Shift+마우스휠 드래그와 같은 조작)
         window.addEventListener('keydown', (e) => {
@@ -925,31 +933,7 @@ class ParticleGallery {
         if (!this.detailPage.classList.contains('hidden')) return;
         if (this.searchPanel.contains(event.target) || this.searchToggle.contains(event.target)) return;
 
-        this.mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-        this.mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-        // Raycaster로 호버 감지 (카드가 앞/뒤 평면 두 장으로 이루어진 그룹이라 recursive 필요)
-        this.raycaster.setFromCamera(this.mouse, this.camera);
-        const intersects = this.raycaster.intersectObjects(this.particleGroup.children, true);
-
-        // 이전 호버 파티클 상태 복원
-        if (this.hoveredParticle) {
-            this.setParticleScale(this.hoveredParticle.mesh, 1);
-        }
-
-        if (intersects.length > 0) {
-            const hovered = intersects[0].object;
-            const particle = hovered.userData.particle;
-
-            this.hoveredParticle = particle;
-            this.setParticleScale(particle.mesh, 1.3);
-
-            this.updatePreviewPanel(particle);
-        } else {
-            // 카드가 아닌 빈 배경 위에서는 미리보기를 닫는다
-            this.hoveredParticle = null;
-            this.hidePreviewPanel();
-        }
+        this.updateHoverAt(event.clientX, event.clientY);
     }
 
     onClick(event) {
@@ -990,6 +974,102 @@ class ParticleGallery {
 
         const pinData = intersects[0].object.userData.particle.pinData;
         this.showDetailPage(pinData);
+    }
+
+    /**
+     * 지금 좌표 아래 있는 게 3D 캔버스 자체인지 확인한다. 검색 패널/상세 페이지/버튼 같은
+     * 고정 UI는 캔버스 위에 그려지므로, 여기서 false가 나오면 그 UI가 자체 클릭 처리를
+     * 하도록 그냥 내버려두고(=터치 핸들러가 손대지 않고) 넘어가야 한다.
+     */
+    isCanvasTarget(x, y) {
+        const target = document.elementFromPoint(x, y);
+        return !!target && (target === this.container || target.tagName === 'CANVAS');
+    }
+
+    /**
+     * 모바일 터치 지원: 마우스가 없는 화면에는 hover가 없으므로, 손가락을 대고 있는
+     * 동안을 "호버 중"으로 취급해서 같은 미리보기 로직을 그대로 재사용한다.
+     */
+    onTouchStart(event) {
+        if (event.touches.length !== 1) return;
+        const touch = event.touches[0];
+        this.touchStartPos = { x: touch.clientX, y: touch.clientY };
+
+        if (!this.isCanvasTarget(touch.clientX, touch.clientY)) return;
+        this.updateHoverAt(touch.clientX, touch.clientY);
+    }
+
+    onTouchMove(event) {
+        if (event.touches.length !== 1) return;
+        const touch = event.touches[0];
+        if (!this.isCanvasTarget(touch.clientX, touch.clientY)) return;
+        this.updateHoverAt(touch.clientX, touch.clientY);
+    }
+
+    /**
+     * 손가락을 뗀 시점: 많이 움직였으면(카메라를 돌린 것) 탭이 아니므로 무시하고,
+     * 캔버스가 아닌 다른 UI(버튼/입력창/링크 등) 위였으면 그쪽이 자기 click으로
+     * 알아서 처리하도록 그대로 둔다. 캔버스 위에서의 짧은 탭만 카드 열기로 이어진다.
+     */
+    onTouchEnd(event) {
+        if (this.hoveredParticle) {
+            this.setParticleScale(this.hoveredParticle.mesh, 1);
+            this.hoveredParticle = null;
+        }
+        this.hidePreviewPanel();
+
+        const touch = event.changedTouches[0];
+        const startPos = this.touchStartPos;
+        this.touchStartPos = null;
+        if (!touch || !startPos) return;
+
+        if (!this.isCanvasTarget(touch.clientX, touch.clientY)) return;
+
+        // 캔버스 위에서 일어난 터치는 여기서 완전히 처리하고, 뒤이어 브라우저가
+        // 합성해서 쏘는 click은 억제한다 (그렇지 않으면 카메라를 돌리는 드래그도
+        // 매번 합성 click을 만들어내서 onClick의 드래그 판정을 무력화시킨다).
+        event.preventDefault();
+
+        const dragDistance = Math.hypot(touch.clientX - startPos.x, touch.clientY - startPos.y);
+        if (dragDistance > 10) return;
+
+        const tapMouse = new THREE.Vector2(
+            (touch.clientX / window.innerWidth) * 2 - 1,
+            -(touch.clientY / window.innerHeight) * 2 + 1
+        );
+        this.raycaster.setFromCamera(tapMouse, this.camera);
+        const intersects = this.raycaster.intersectObjects(this.particleGroup.children, true);
+        if (intersects.length === 0) return;
+
+        const pinData = intersects[0].object.userData.particle.pinData;
+        this.showDetailPage(pinData);
+    }
+
+    /**
+     * onMouseMove의 호버 판정 로직과 동일 - 마우스 좌표 대신 임의의 좌표(터치 지점)를
+     * 받아서 그 자리에 카드가 있으면 미리보기를 띄우고, 없으면 닫는다.
+     */
+    updateHoverAt(clientX, clientY) {
+        const point = new THREE.Vector2(
+            (clientX / window.innerWidth) * 2 - 1,
+            -(clientY / window.innerHeight) * 2 + 1
+        );
+        this.raycaster.setFromCamera(point, this.camera);
+        const intersects = this.raycaster.intersectObjects(this.particleGroup.children, true);
+
+        if (this.hoveredParticle) {
+            this.setParticleScale(this.hoveredParticle.mesh, 1);
+        }
+
+        if (intersects.length > 0) {
+            const particle = intersects[0].object.userData.particle;
+            this.hoveredParticle = particle;
+            this.setParticleScale(particle.mesh, 1.3);
+            this.updatePreviewPanel(particle);
+        } else {
+            this.hoveredParticle = null;
+            this.hidePreviewPanel();
+        }
     }
 
     /**
