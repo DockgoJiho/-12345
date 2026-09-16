@@ -949,10 +949,10 @@ class ParticleGallery {
 
     onClick(event) {
         // 드래그(회전 등) 끝에 발생한 클릭은 카드를 여는 클릭이 아니라 카메라 조작이었을
-        // 뿐이므로 무시한다
+        // 뿐이므로 무시한다 (실제 클릭은 손이 살짝 떨려도 몇 px 움직이므로 여유 있게 잡는다)
         if (this.mouseDownPos) {
             const dragDistance = Math.hypot(event.clientX - this.mouseDownPos.x, event.clientY - this.mouseDownPos.y);
-            if (dragDistance > 4) return;
+            if (dragDistance > 10) return;
         }
 
         // 삭제 확인 팝업이 열려 있을 때 바깥을 클릭하면 그냥 팝업만 닫는다
@@ -967,9 +967,20 @@ class ParticleGallery {
         if (this.detailPage.contains(event.target)) return;
         if (this.searchPanel.contains(event.target) || this.searchToggle.contains(event.target)) return;
 
-        if (!this.hoveredParticle) return;
+        // this.hoveredParticle은 가장 최근 mousemove 시점 기준이라, 상세 페이지를 닫자마자
+        // 바로 다시 클릭하는 경우처럼 그 사이 mousemove가 한 번도 없었으면 오래된(stale)
+        // 값일 수 있다 - "가끔 클릭이 안 먹는" 원인이 바로 이거였다. 그래서 클릭 시점
+        // 좌표로 즉시 다시 레이캐스트해서, 화면에 보이는 화살표(=커서) 위치 기준으로
+        // 항상 정확하게 판정한다.
+        const clickMouse = new THREE.Vector2(
+            (event.clientX / window.innerWidth) * 2 - 1,
+            -(event.clientY / window.innerHeight) * 2 + 1
+        );
+        this.raycaster.setFromCamera(clickMouse, this.camera);
+        const intersects = this.raycaster.intersectObjects(this.particleGroup.children, true);
+        if (intersects.length === 0) return;
 
-        const pinData = this.hoveredParticle.pinData;
+        const pinData = intersects[0].object.userData.particle.pinData;
         this.showDetailPage(pinData);
     }
 
@@ -1155,6 +1166,10 @@ class ParticleGallery {
 
     closeDetailPage() {
         this.detailPage.classList.add('hidden');
+        // 상세 페이지가 열려 있는 동안 호버 갱신이 멈춰 있었으므로, 닫힌 직후엔
+        // 오래된(stale) 값을 들고 있지 않도록 비워둔다 - 마우스가 다시 움직이면 새로 채워진다
+        this.hoveredParticle = null;
+        this.hidePreviewPanel();
     }
 
     /**
