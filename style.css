@@ -24,18 +24,6 @@ button {
     border: none;
 }
 
-/* 화살표는 검색 버튼/패널, 아카이브 링크 위나 상세 페이지가 열려 있을 땐 일부러
-   숨는다(updateSearchPointer 참고) - 그 동안 아무 커서도 안 보이면 곤란하니
-   그 영역에서만 원래 OS 커서를 되살린다 */
-.search-toggle,
-.search-panel,
-.search-panel *,
-.detail-page,
-.detail-page *,
-.back-home-link {
-    cursor: auto !important;
-}
-
 #canvas-container {
     width: 100%;
     height: 100%;
@@ -127,9 +115,8 @@ canvas {
     }
 }
 
-/* 마우스 커서 옆에서 검색 버튼 쪽을 항상 가리키는 화살표. 클릭 판정과는 완전히
-   무관한 순수 시각적 보조 표시일 뿐이다 - 실제 클릭은 항상 커서 좌표로 직접
-   계산한다. 커서와 겹치지 않도록 일정 거리 떨어진 자리에 그린다.
+/* OS 커서를 완전히 대신하는 화살표. 예외 없이 항상 최상단에 있어야 하므로
+   상세 페이지(z-index:1000)보다도 위에 오도록 아주 큰 값을 준다.
    단순 삼각형(➤)은 방향을 가리키는 느낌이 약해서, 뒤가 오목하게 파인 GPS/나침반
    스타일의 다트 모양 SVG로 바꿔서 "이 방향을 가리키고 있다"는 지시성을 강조한다.
    메인 페이지 파란 배너와 같은 파란색을 써서 같은 계열의 요소임을 암시한다 */
@@ -137,9 +124,7 @@ canvas {
     position: fixed;
     top: 0;
     left: 0;
-    /* SEARCH/ARCHIVE 버튼(z-index:50)에 다가갔을 때 화살표가 그 뒤로 숨어버리면
-       어색하므로, 항상 그 위에 그려지도록 더 높은 값을 준다 */
-    z-index: 55;
+    z-index: 2000;
     width: 60px;
     height: 60px;
     color: #3a3ef2;
@@ -165,7 +150,7 @@ canvas {
     position: fixed;
     top: 0;
     left: 0;
-    z-index: 56;
+    z-index: 2001;
     transform: translate(-50%, -50%);
     background: #3a3ef2;
     color: #fff;

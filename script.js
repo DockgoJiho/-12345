@@ -22,8 +22,6 @@ class ParticleGallery {
         this.searchRequestId = 0;
         this.relatedRequestId = 0;
 
-        this.backHomeLink = document.querySelector('.back-home-link');
-
         // 마우스를 따라다니며 검색 버튼을 가리키는 화살표의 상태
         this.searchPointer = document.getElementById('search-pointer');
         this.searchPointerHint = document.getElementById('search-pointer-hint');
@@ -1518,13 +1516,11 @@ class ParticleGallery {
     }
 
     /**
-     * 우측 상단 검색 버튼 쪽을 항상 가리키는 화살표를 매 프레임 갱신한다. 클릭 판정과는
-     * 완전히 무관한 순수 시각적 보조 표시일 뿐이다(실제 클릭은 항상 이벤트의 실제 좌표로
-     * 직접 계산한다). 지금은 OS 커서를 숨기고 이 화살표가 커서 역할을 대신하므로, 실제
-     * 커서 좌표에 정확히 겹치게 그린다 - 그렇지 않으면 화살표는 빈 공간에 있는데 그 화살표
-     * 위치와 다른 곳(보이지 않는 실제 커서 자리)에서 호버/클릭이 일어나는 것처럼 보여
-     * 혼란스럽다. 상세 페이지가 열려 있거나 검색 패널/버튼, 아카이브 링크 위에 커서가
-     * 있을 땐 굳이 가리킬 필요가 없으니 숨긴다.
+     * OS 커서를 완전히 숨기고 이 화살표가 커서의 모든 역할(위치 표시, 클릭 지점)을
+     * 대신하므로, 검색 버튼/패널이나 상세 페이지 위를 포함해 예외 없이 항상 화면
+     * 어딘가에 떠 있어야 한다 - 그렇지 않으면 그 위에서는 아무 포인터도 안 보이는
+     * 화면이 되어버린다. 클릭 판정과는 완전히 무관한 순수 시각적 표시일 뿐이다
+     * (실제 클릭은 항상 이벤트의 실제 좌표로 직접 계산한다).
      */
     updateSearchPointer() {
         if (!this.searchPointer) return;
@@ -1538,15 +1534,21 @@ class ParticleGallery {
         const rect = this.searchToggle.getBoundingClientRect();
         const targetX = rect.left + rect.width / 2;
         const targetY = rect.top + rect.height / 2;
+        const distanceToTarget = Math.hypot(targetX - anchorX, targetY - anchorY);
 
-        const rawAngle = Math.atan2(targetY - anchorY, targetX - anchorX) * 180 / Math.PI;
+        // 검색 버튼에 아주 가까워지면(그 위에 있거나 거의 다 왔을 때) 각도 계산이
+        // 0에 가까운 거리로 나뉘어 미세한 마우스 떨림에도 각도가 홱홱 튄다 - 그 구간에서는
+        // 새로 계산하지 않고 마지막 각도를 그대로 유지해서 떨림을 없앤다.
+        if (distanceToTarget > 30) {
+            const rawAngle = Math.atan2(targetY - anchorY, targetX - anchorX) * 180 / Math.PI;
 
-        // 각도가 -180/180 경계를 넘나들 때 CSS transition이 반대 방향으로 크게
-        // 돌아버리는 것을 막기 위해, 이전 각도를 기준으로 가장 가까운 방향으로만 보정한다
-        let delta = rawAngle - (this.pointerAngle % 360);
-        while (delta > 180) delta -= 360;
-        while (delta < -180) delta += 360;
-        this.pointerAngle += delta;
+            // 각도가 -180/180 경계를 넘나들 때 CSS transition이 반대 방향으로 크게
+            // 돌아버리는 것을 막기 위해, 이전 각도를 기준으로 가장 가까운 방향으로만 보정한다
+            let delta = rawAngle - (this.pointerAngle % 360);
+            while (delta > 180) delta -= 360;
+            while (delta < -180) delta += 360;
+            this.pointerAngle += delta;
+        }
 
         this.searchPointer.style.left = `${anchorX}px`;
         this.searchPointer.style.top = `${anchorY}px`;
@@ -1560,16 +1562,8 @@ class ParticleGallery {
             this.searchPointerHint.style.top = `${anchorY + Math.sin(rad) * 45}px`;
         }
 
-        // 실제 커서가 검색 버튼/패널이나 아카이브 링크 위에 있거나 상세 페이지가
-        // 열려 있으면 굳이 가리킬 필요가 없으니 숨긴다.
-        const cursorEl = document.elementFromPoint(this.pointerTarget.x, this.pointerTarget.y);
-        const overSearchUi = !!cursorEl && (this.searchToggle.contains(cursorEl) || this.searchPanel.contains(cursorEl));
-        const overBackLink = !!cursorEl && this.backHomeLink.contains(cursorEl);
-        const shouldShow = this.pointerHasMoved
-            && this.detailPage.classList.contains('hidden')
-            && !overSearchUi
-            && !overBackLink;
-        this.searchPointer.classList.toggle('visible', shouldShow);
+        // 마우스가 한 번이라도 움직였으면 예외 없이 항상 보이게 한다
+        this.searchPointer.classList.toggle('visible', this.pointerHasMoved);
     }
 
     animate() {
