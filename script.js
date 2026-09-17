@@ -167,6 +167,8 @@ class ParticleGallery {
         THREE.Cache.enabled = true;
         this.textureLoader = new THREE.TextureLoader();
         this.textureLoader.setCrossOrigin('anonymous');
+        // 카드를 만들기 전에 preloadPinImages가 채워두는 미리 로드된 텍스처 캐시
+        this.preloadedTextures = new Map();
 
         // 카드들은 스스로 빛나는 화면처럼 보여야 하므로 장면 조명은 최소한으로만 둔다
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
@@ -203,6 +205,12 @@ class ParticleGallery {
             if (data.success && data.pins && data.pins.length > 0) {
                 console.log(`✓ ${data.pins.length}개의 핀을 로드했습니다`);
                 this.pinsData = data.pins;
+
+                // 카드마다 이미지가 로드되는 대로 하나씩 튀어나오면 터널에 진입하자마자
+                // 지저분하게 채워지는 것처럼 보인다. 그래서 실제 이미지를 전부 미리
+                // 받아둔 다음에야 카드를 만들고 터널을 한꺼번에 보여준다.
+                await this.preloadPinImages(this.pinsData);
+
                 this.hideLoading();
                 this.createParticles();
                 this.playEntranceAnimation();
@@ -213,14 +221,54 @@ class ParticleGallery {
         } catch (error) {
             console.error('Pinterest API 로드 실패:', error);
             this.showError(error.message);
-            
+
             // 실패 시 샘플 데이터 사용
             console.log('샘플 데이터로 갤러리를 초기화합니다');
             this.pinsData = PINS_DATA;
+            await this.preloadPinImages(this.pinsData);
             this.hideLoading();
             this.createParticles();
             this.animate();
         }
+    }
+
+    /**
+     * 카드를 만들기 전에 모든 핀 이미지를 미리 받아서 this.preloadedTextures에 채워둔다.
+     * createImageCard가 이 맵에서 즉시 꺼내 쓸 수 있으면 placeholder 없이 바로 실제
+     * 이미지로 카드를 만들 수 있어서, 이미지들이 제각각 로드되는 대로 하나씩 나타나는
+     * 대신 터널 진입 시 한꺼번에 나타난다. 개별 이미지 하나가 실패해도 전체를 막지
+     * 않고(그 카드만 나중에 개별 재시도), 진행 상황을 로딩 문구에 표시한다.
+     */
+    preloadPinImages(pins) {
+        this.preloadedTextures = new Map();
+        const uniqueUrls = [...new Set(pins.map((p) => p.image).filter(Boolean))];
+        if (uniqueUrls.length === 0) return Promise.resolve();
+
+        let loadedCount = 0;
+        const updateProgress = () => {
+            loadedCount++;
+            this.updateLoadingText(`🖼️ 이미지를 불러오는 중... (${loadedCount}/${uniqueUrls.length})`);
+        };
+
+        return Promise.all(uniqueUrls.map((imageUrl) => new Promise((resolve) => {
+            const isLocalImage = imageUrl.startsWith('/images/');
+            const loadUrl = isLocalImage ? imageUrl : `/api/image?url=${encodeURIComponent(imageUrl)}`;
+
+            this.textureLoader.load(
+                loadUrl,
+                (texture) => {
+                    this.preloadedTextures.set(imageUrl, texture);
+                    updateProgress();
+                    resolve();
+                },
+                undefined,
+                () => {
+                    // 개별 이미지 로드 실패는 전체를 막지 않는다 - createImageCard가 나중에 재시도한다
+                    updateProgress();
+                    resolve();
+                }
+            );
+        })));
     }
 
     showLoading() {
@@ -229,6 +277,11 @@ class ParticleGallery {
         loading.textContent = '📌 Pinterest 핀을 불러오는 중...';
         loading.id = 'loading-indicator';
         this.container.appendChild(loading);
+    }
+
+    updateLoadingText(text) {
+        const loading = document.getElementById('loading-indicator');
+        if (loading) loading.textContent = text;
     }
 
     hideLoading() {
@@ -407,7 +460,10 @@ class ParticleGallery {
     }
 
     /**
-     * 이미지를 텍스쳐로 하는 카드 형태의 파티클 생성
+     * 이미지를 텍스쳐로 하는 카드 형태의 파티클 생성. 프레임(테두리/캡션 바) 없이
+     * 원본 이미지 자체만 카드로 보여준다. this.preloadedTextures에 미리 로드해둔
+     * 이미지가 있으면(보통의 경우) 즉시 그 실제 이미지로 만들어서 placeholder를 거치지
+     * 않고, 어쩌다 미리 로드에 실패한 것만 예전처럼 개별적으로 재시도한다.
      */
     createImageCard(particle, pinData) {
         // 포켓몬 카드처럼 두께 없는 완전히 평평한 카드로 표현한다.
@@ -420,16 +476,15 @@ class ParticleGallery {
         const PLACEHOLDER_ASPECTS = [0.75, 0.85, 1, 1.15, 1.3, 1.5];
         let aspect = PLACEHOLDER_ASPECTS[Math.floor(Math.random() * PLACEHOLDER_ASPECTS.length)];
 
+        const preloaded = pinData.image ? this.preloadedTextures.get(pinData.image) : null;
+        const preloadedImg = preloaded ? preloaded.image : null;
+        if (preloadedImg && preloadedImg.naturalWidth && preloadedImg.naturalHeight) {
+            aspect = Math.min(Math.max(preloadedImg.naturalWidth / preloadedImg.naturalHeight, 0.55), 1.8);
+        }
+
         const geometry = new THREE.PlaneGeometry(baseHeight * aspect, baseHeight);
 
-        // 카드마다 하나의 액센트 색을 정해서, 테두리/캡션 바 등 공통 프레임에 일관되게 사용한다
-        // (상세 페이지를 열 때도 같은 색을 재사용하기 위해 particle.pinData에 저장해둔다)
-        const accentColors = ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#00c2b8', '#e8875f'];
-        const accentColor = accentColors[Math.floor(Math.random() * accentColors.length)];
-        particle.pinData.accentColor = accentColor;
-
-        // 이미지가 로드되기 전에도 동일한 프레임 디자인을 보여준다 (그라디언트 placeholder)
-        const canvas = this.renderCardFace(null, pinData, accentColor, aspect);
+        const canvas = this.renderPlainImageFace(preloadedImg, aspect);
         const canvasTexture = new THREE.CanvasTexture(canvas);
         canvasTexture.magFilter = THREE.LinearFilter;
         canvasTexture.minFilter = THREE.LinearMipmapLinearFilter;
@@ -446,13 +501,13 @@ class ParticleGallery {
         const card = new THREE.Mesh(geometry, material);
         card.position.copy(particle.position);
         card.userData.imageUrl = pinData.image;
-        card.userData.isImageLoaded = false;
+        card.userData.isImageLoaded = !!preloadedImg;
         card.userData.particle = particle;
 
-        // 실제 Pinterest 이미지 비동기 로드 (mesh 생성 후)
-        // 로컬로 미리 받아둔 이미지(/images/...)는 그대로 사용하고,
-        // 그렇지 않은 경우(Pinterest CDN 원본 URL)는 CORS 문제로 서버 프록시를 거쳐서 로드한다
-        if (pinData.image && this.textureLoader) {
+        // 미리 로드된 이미지가 없을 때만(사전 로드가 실패했거나 건너뛴 경우) 개별적으로
+        // 다시 시도한다 - 로컬로 미리 받아둔 이미지(/images/...)는 그대로 사용하고,
+        // 그렇지 않은 경우(Pinterest CDN 원본 URL)는 CORS 문제로 서버 프록시를 거친다
+        if (pinData.image && this.textureLoader && !preloadedImg) {
             const isLocalImage = pinData.image.startsWith('/images/');
             const loadUrl = isLocalImage
                 ? pinData.image
@@ -473,14 +528,13 @@ class ParticleGallery {
                     card.geometry.dispose();
                     card.geometry = newGeometry;
 
-                    // 실제 사진도 동일한 프레임 디자인 안에 넣어서 일관된 인터페이스로 보이게 한다
-                    const framedCanvas = this.renderCardFace(img, pinData, accentColor, aspect);
-                    const framedTexture = new THREE.CanvasTexture(framedCanvas);
-                    framedTexture.magFilter = THREE.LinearFilter;
-                    framedTexture.minFilter = THREE.LinearMipmapLinearFilter;
-                    framedTexture.anisotropy = 16;
+                    const rawCanvas = this.renderPlainImageFace(img, aspect);
+                    const rawTexture = new THREE.CanvasTexture(rawCanvas);
+                    rawTexture.magFilter = THREE.LinearFilter;
+                    rawTexture.minFilter = THREE.LinearMipmapLinearFilter;
+                    rawTexture.anisotropy = 16;
 
-                    material.map = framedTexture;
+                    material.map = rawTexture;
                     material.needsUpdate = true;
                     card.userData.isImageLoaded = true;
                     console.log('📸 이미지 로드 완료:', pinData.title);
@@ -497,12 +551,11 @@ class ParticleGallery {
     }
 
     /**
-     * 모든 카드에 공통으로 적용되는 프레임(매트+테두리+캡션 바) 안에
-     * 이미지(또는 placeholder 그라디언트)를 그려 넣은 캔버스를 생성한다.
-     * image가 null이면 이미지 로딩 전 placeholder를 그린다.
+     * 프레임(테두리/캡션 바) 없이 원본 이미지 자체만 카드 전체를 채우도록 그린다.
+     * image가 null이면 로드 전 무채색 placeholder를 그린다.
      * aspect(가로/세로)에 맞춰 캔버스 자체의 가로세로 비율도 카드마다 다르게 만든다.
      */
-    renderCardFace(image, pinData, accentColor, aspect = 1.2) {
+    renderPlainImageFace(image, aspect = 1.2) {
         // 터널 안에 수백 장이 동시에 존재하므로 해상도를 적당히 낮춰 GPU 메모리를 아낀다
         const height = 264;
         const width = Math.round(height * aspect);
@@ -512,120 +565,33 @@ class ParticleGallery {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
 
-        // 매트 배경
-        ctx.fillStyle = '#f7f5f1';
-        ctx.fillRect(0, 0, width, height);
-
-        // 바깥 액센트 테두리 (모든 카드에 공통으로 적용되는 프레임)
-        const border = 5;
-        ctx.fillStyle = accentColor;
-        ctx.fillRect(0, 0, width, border);
-        ctx.fillRect(0, height - border, width, border);
-        ctx.fillRect(0, 0, border, height);
-        ctx.fillRect(width - border, 0, border, height);
-
-        // 이미지 영역 (둥근 모서리로 클립)
-        const margin = 15;
-        const captionHeight = 35;
-        const imgX = margin;
-        const imgY = margin;
-        const imgW = width - margin * 2;
-        const imgH = height - margin * 2 - captionHeight;
-        const radius = 8;
-
-        ctx.save();
-        this.roundRectPath(ctx, imgX, imgY, imgW, imgH, radius);
-        ctx.clip();
         if (image) {
-            this.drawImageCover(ctx, image, imgX, imgY, imgW, imgH);
+            this.drawImageCover(ctx, image, 0, 0, width, height);
         } else {
-            const gradient = ctx.createLinearGradient(imgX, imgY, imgX + imgW, imgY + imgH);
-            gradient.addColorStop(0, this.lightenColor(accentColor, 30));
-            gradient.addColorStop(1, this.darkenColor(accentColor, 20));
-            ctx.fillStyle = gradient;
-            ctx.fillRect(imgX, imgY, imgW, imgH);
+            ctx.fillStyle = '#e5e3de';
+            ctx.fillRect(0, 0, width, height);
         }
-        ctx.restore();
-
-        // 이미지 가장자리 얇은 라인 (매트 위에 놓인 사진 느낌)
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.08)';
-        ctx.lineWidth = 1.5;
-        this.roundRectPath(ctx, imgX, imgY, imgW, imgH, radius);
-        ctx.stroke();
-
-        // 하단 캡션 바 (모든 카드가 공유하는 인터페이스 요소)
-        const capY = imgY + imgH + 6;
-        const capH = captionHeight - 6;
-        this.roundRectPath(ctx, imgX, capY, imgW, capH, 6);
-        ctx.fillStyle = accentColor;
-        ctx.fill();
-
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-        ctx.font = '600 12px "Segoe UI", sans-serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        const text = (pinData.description || pinData.title || '핀터레스트').trim().slice(0, 24);
-        ctx.fillText(text, imgX + 10, capY + capH / 2 + 1);
-
-        ctx.beginPath();
-        ctx.arc(imgX + imgW - 11, capY + capH / 2, 3, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-        ctx.fill();
 
         return canvas;
     }
 
     /**
-     * 둥근 사각형 경로 (구형 브라우저 호환을 위해 arcTo로 직접 구현)
-     */
-    roundRectPath(ctx, x, y, w, h, r) {
-        ctx.beginPath();
-        ctx.moveTo(x + r, y);
-        ctx.arcTo(x + w, y, x + w, y + h, r);
-        ctx.arcTo(x + w, y + h, x, y + h, r);
-        ctx.arcTo(x, y + h, x, y, r);
-        ctx.arcTo(x, y, x + w, y, r);
-        ctx.closePath();
-    }
-
-    /**
-     * object-fit: cover 방식으로 이미지를 영역에 꽉 채워 그린다 (비율 유지, 넘치는 부분은 크롭)
+     * object-fit: cover 방식으로 이미지를 영역에 꽉 채워 그린다 (비율 유지, 넘치는 부분은 크롭).
+     * 카드 지오메트리를 이미 실제 이미지 비율에 맞춰뒀으므로 크롭은 거의 일어나지 않지만,
+     * 원본 핀 이미지 캡처 자체에 핀터레스트 페이지의 둥근 모서리(배경색이 비쳐 보이는 흰
+     * 여백)가 섞여 들어가 있어서 그 모서리가 보이지 않도록 필요한 배율보다 살짝 더 확대해서
+     * 그린다.
      */
     drawImageCover(ctx, img, x, y, w, h) {
         const iw = img.naturalWidth || img.width;
         const ih = img.naturalHeight || img.height;
         if (!iw || !ih) return;
-        // 원본 핀 이미지 캡처 자체에 핀터레스트 페이지의 둥근 모서리(배경색이 비쳐 보이는
-        // 흰 여백)가 섞여 들어가 있어서, 카드 비율이 이미지 비율과 거의 같아 크롭이 거의
-        // 안 일어날 때도 그 모서리가 보이지 않도록 필요한 배율보다 살짝 더 확대해서 그린다
         const scale = Math.max(w / iw, h / ih) * 1.08;
         const dw = iw * scale;
         const dh = ih * scale;
         const dx = x + (w - dw) / 2;
         const dy = y + (h - dh) / 2;
         ctx.drawImage(img, dx, dy, dw, dh);
-    }
-
-    /**
-     * 색상 밝게 조정
-     */
-    lightenColor(hexColor, amount) {
-        const hex = hexColor.replace('#', '');
-        const r = Math.min(255, parseInt(hex.substring(0, 2), 16) + amount);
-        const g = Math.min(255, parseInt(hex.substring(2, 4), 16) + amount);
-        const b = Math.min(255, parseInt(hex.substring(4, 6), 16) + amount);
-        return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
-    }
-    
-    /**
-     * 색상 어둡게 조정
-     */
-    darkenColor(hexColor, amount) {
-        const hex = hexColor.replace('#', '');
-        const r = Math.max(0, parseInt(hex.substring(0, 2), 16) - amount);
-        const g = Math.max(0, parseInt(hex.substring(2, 4), 16) - amount);
-        const b = Math.max(0, parseInt(hex.substring(4, 6), 16) - amount);
-        return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
     }
 
     /**
