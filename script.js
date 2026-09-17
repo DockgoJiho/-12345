@@ -22,6 +22,8 @@ class ParticleGallery {
         this.searchRequestId = 0;
         this.relatedRequestId = 0;
 
+        this.backHomeLink = document.querySelector('.back-home-link');
+
         // 마우스를 따라다니며 검색 버튼을 가리키는 화살표의 상태
         this.searchPointer = document.getElementById('search-pointer');
         this.searchPointerHint = document.getElementById('search-pointer-hint');
@@ -741,8 +743,14 @@ class ParticleGallery {
         window.addEventListener('keyup', (e) => {
             if (e.code === 'Space') this.driftBoostActive = false;
         });
+        // 창이 포커스를 잃으면(다른 앱/탭으로 전환 등) keyup이나 mouseup이 이 페이지로
+        // 안 들어올 수 있다 - 그러면 Shift를 누른 채로 포커스를 잃었을 때 가운데 버튼이
+        // PAN에 눌린 채로 영원히 남거나, mousedown만 기록된 채 다음 클릭의 드래그 거리
+        // 판정이 엉뚱해질 수 있다. 포커스를 되찾을 때마다 관련 상태를 안전하게 초기화한다.
         window.addEventListener('blur', () => {
             this.driftBoostActive = false;
+            this.controls.mouseButtons.MIDDLE = this.defaultMiddleMouseAction;
+            this.mouseDownPos = null;
         });
 
         // Esc: 열려 있는 오버레이가 있으면 가까운 것부터 하나씩 닫고, 아무것도 없으면
@@ -774,7 +782,7 @@ class ParticleGallery {
             this.pointerTarget.y = e.clientY;
             this.pointerHasMoved = true;
         });
-        
+
         this.detailClose.addEventListener('click', () => this.closeDetailPage());
         this.detailMemo.addEventListener('input', () => this.onMemoInput());
 
@@ -937,16 +945,24 @@ class ParticleGallery {
     }
 
     onClick(event) {
+        // 클릭이 계속 안 되는 원인을 재현 환경에서 못 찾아서, 실제로 재현될 때 콘솔에서
+        // 바로 원인을 볼 수 있도록 임시로 남겨두는 진단 로그 - onClick 자체가 호출되는지부터 확인한다
+        console.log('[클릭 진단] onClick 호출됨', { x: event.clientX, y: event.clientY, target: event.target && event.target.tagName });
+
         // 드래그(회전 등) 끝에 발생한 클릭은 카드를 여는 클릭이 아니라 카메라 조작이었을
         // 뿐이므로 무시한다 (실제 클릭은 손이 살짝 떨려도 몇 px 움직이므로 여유 있게 잡는다)
         if (this.mouseDownPos) {
             const dragDistance = Math.hypot(event.clientX - this.mouseDownPos.x, event.clientY - this.mouseDownPos.y);
-            if (dragDistance > 10) return;
+            if (dragDistance > 10) {
+                console.log('[클릭 진단] 드래그로 판단되어 무시', { dragDistance: dragDistance.toFixed(1) });
+                return;
+            }
         }
 
         // 삭제 확인 팝업이 열려 있을 때 바깥을 클릭하면 그냥 팝업만 닫는다
         // (그 클릭이 이어서 카드를 열어버리면 혼란스러우므로 거기서 끝낸다)
         if (!this.deleteConfirm.classList.contains('hidden')) {
+            console.log('[클릭 진단] 삭제 확인 팝업이 열려있어서 무시');
             if (!this.deleteConfirm.contains(event.target)) this.hideDeleteConfirm();
             return;
         }
@@ -954,26 +970,58 @@ class ParticleGallery {
         // 상세 페이지가 열려 있을 때: 카드 바깥(뒷배경)을 클릭하면 닫고,
         // 카드 안쪽 클릭(메모 입력, 닫기 버튼 등)은 카드 열기 로직과 무관하므로 무시한다.
         if (this.detailPage.contains(event.target)) {
+            console.log('[클릭 진단] 클릭 대상이 상세페이지 내부라서 무시', { isBackdrop: event.target === this.detailPage });
             if (event.target === this.detailPage) this.closeDetailPage();
             return;
         }
-        if (this.searchPanel.contains(event.target) || this.searchToggle.contains(event.target)) return;
+        if (this.searchPanel.contains(event.target) || this.searchToggle.contains(event.target)) {
+            console.log('[클릭 진단] 클릭 대상이 검색 UI라서 무시');
+            return;
+        }
 
         // this.hoveredParticle은 가장 최근 mousemove 시점 기준이라, 상세 페이지를 닫자마자
         // 바로 다시 클릭하는 경우처럼 그 사이 mousemove가 한 번도 없었으면 오래된(stale)
-        // 값일 수 있다 - "가끔 클릭이 안 먹는" 원인이 바로 이거였다. 그래서 클릭 시점
-        // 좌표로 즉시 다시 레이캐스트해서, 화면에 보이는 화살표(=커서) 위치 기준으로
-        // 항상 정확하게 판정한다.
-        const clickMouse = new THREE.Vector2(
-            (event.clientX / window.innerWidth) * 2 - 1,
-            -(event.clientY / window.innerHeight) * 2 + 1
-        );
-        this.raycaster.setFromCamera(clickMouse, this.camera);
-        const intersects = this.raycaster.intersectObjects(this.particleGroup.children, true);
-        if (intersects.length === 0) return;
+        // 값일 수 있다. 그래서 클릭 시점 좌표(event.clientX/Y, 실제 커서 위치)로 즉시
+        // 다시 레이캐스트해서 항상 정확하게 판정한다 - 화살표는 순전히 시각적 보조
+        // 표시일 뿐이라 이 판정과는 아무 관계가 없다.
+        const intersects = this.raycastCardsNear(event.clientX, event.clientY);
+        if (intersects.length === 0) {
+            console.log('[클릭 진단] 레이캐스트가 카드에 안 맞음', { x: event.clientX, y: event.clientY, target: event.target && event.target.tagName });
+            return;
+        }
+        console.log('[클릭 진단] 카드 열기 성공');
 
         const pinData = intersects[0].object.userData.particle.pinData;
         this.showDetailPage(pinData);
+    }
+
+    /**
+     * 카드가 작고 계속 흘러가듯 움직이다 보니, 눈에는 카드 위를 클릭한 것 같아도
+     * 정확한 그 픽셀은 카드와 카드 사이 빈틈이었던 경우가 잦다 - 그러면 레이캐스트가
+     * 아무것도 못 맞혀서 "클릭이 안 먹는다"고 느껴진다. 정확한 지점이 빗나가면 바로
+     * 주변 몇 곳을 추가로 찔러봐서, 조준이 살짝만 벗어나도 여전히 인식되게 한다.
+     */
+    raycastCardsNear(clientX, clientY) {
+        const tryPoint = (x, y) => {
+            const point = new THREE.Vector2(
+                (x / window.innerWidth) * 2 - 1,
+                -(y / window.innerHeight) * 2 + 1
+            );
+            this.raycaster.setFromCamera(point, this.camera);
+            return this.raycaster.intersectObjects(this.particleGroup.children, true);
+        };
+
+        const direct = tryPoint(clientX, clientY);
+        if (direct.length > 0) return direct;
+
+        const radius = 14;
+        const ringPoints = 8;
+        for (let i = 0; i < ringPoints; i++) {
+            const angle = (i / ringPoints) * Math.PI * 2;
+            const nearby = tryPoint(clientX + Math.cos(angle) * radius, clientY + Math.sin(angle) * radius);
+            if (nearby.length > 0) return nearby;
+        }
+        return [];
     }
 
     /**
@@ -1033,12 +1081,7 @@ class ParticleGallery {
         const dragDistance = Math.hypot(touch.clientX - startPos.x, touch.clientY - startPos.y);
         if (dragDistance > 10) return;
 
-        const tapMouse = new THREE.Vector2(
-            (touch.clientX / window.innerWidth) * 2 - 1,
-            -(touch.clientY / window.innerHeight) * 2 + 1
-        );
-        this.raycaster.setFromCamera(tapMouse, this.camera);
-        const intersects = this.raycaster.intersectObjects(this.particleGroup.children, true);
+        const intersects = this.raycastCardsNear(touch.clientX, touch.clientY);
         if (intersects.length === 0) return;
 
         const pinData = intersects[0].object.userData.particle.pinData;
@@ -1050,12 +1093,7 @@ class ParticleGallery {
      * 받아서 그 자리에 카드가 있으면 미리보기를 띄우고, 없으면 닫는다.
      */
     updateHoverAt(clientX, clientY) {
-        const point = new THREE.Vector2(
-            (clientX / window.innerWidth) * 2 - 1,
-            -(clientY / window.innerHeight) * 2 + 1
-        );
-        this.raycaster.setFromCamera(point, this.camera);
-        const intersects = this.raycaster.intersectObjects(this.particleGroup.children, true);
+        const intersects = this.raycastCardsNear(clientX, clientY);
 
         if (this.hoveredParticle) {
             this.setParticleScale(this.hoveredParticle.mesh, 1);
@@ -1456,10 +1494,12 @@ class ParticleGallery {
     }
 
     /**
-     * 마우스 커서와 정확히 같은 위치에서(오프셋/지연 없이), 우측 상단 검색 버튼 쪽을
-     * 항상 가리키는 화살표를 매 프레임 갱신한다. 실제 OS 커서는 CSS로 숨겨두고
-     * 이 화살표가 커서 역할을 대신한다. 상세 페이지가 열려 있거나 검색 패널/버튼
-     * 위에 커서가 있을 땐 굳이 가리킬 필요가 없으니 숨긴다.
+     * 우측 상단 검색 버튼 쪽을 항상 가리키는 화살표를 매 프레임 갱신한다. 클릭 판정과는
+     * 완전히 무관한 순수 시각적 보조 표시일 뿐이다(실제 클릭은 항상 이벤트의 실제 좌표로
+     * 직접 계산한다) - 그래서 커서 위치에 딱 붙이거나 촉 끝을 커서에 맞추는 등의 정렬은
+     * 하지 않고, 실제 OS 커서와 겹치지 않도록 일정 거리 떨어진 자리에 그린다. 상세 페이지가
+     * 열려 있거나 검색 패널/버튼, 아카이브 링크 위에 커서가 있을 땐 굳이 가리킬 필요가
+     * 없으니 숨긴다.
      */
     updateSearchPointer() {
         if (!this.searchPointer) return;
@@ -1467,8 +1507,10 @@ class ParticleGallery {
         this.pointerPos.x = this.pointerTarget.x;
         this.pointerPos.y = this.pointerTarget.y;
 
-        const anchorX = this.pointerPos.x;
-        const anchorY = this.pointerPos.y;
+        // 커서와 겹치지 않도록 대각선으로 일정 거리 띄운 자리에 화살표를 그린다
+        const CURSOR_OFFSET = 34;
+        const anchorX = this.pointerPos.x + CURSOR_OFFSET;
+        const anchorY = this.pointerPos.y + CURSOR_OFFSET;
 
         const rect = this.searchToggle.getBoundingClientRect();
         const targetX = rect.left + rect.width / 2;
@@ -1495,13 +1537,15 @@ class ParticleGallery {
             this.searchPointerHint.style.top = `${anchorY + Math.sin(rad) * 45}px`;
         }
 
-        // 실제 커서가 검색 버튼/패널 위에 있거나 상세 페이지가 열려 있으면 굳이 가리킬
-        // 필요가 없으니 숨긴다
+        // 실제 커서가 검색 버튼/패널이나 아카이브 링크 위에 있거나 상세 페이지가
+        // 열려 있으면 굳이 가리킬 필요가 없으니 숨긴다.
         const cursorEl = document.elementFromPoint(this.pointerTarget.x, this.pointerTarget.y);
         const overSearchUi = !!cursorEl && (this.searchToggle.contains(cursorEl) || this.searchPanel.contains(cursorEl));
+        const overBackLink = !!cursorEl && this.backHomeLink.contains(cursorEl);
         const shouldShow = this.pointerHasMoved
             && this.detailPage.classList.contains('hidden')
-            && !overSearchUi;
+            && !overSearchUi
+            && !overBackLink;
         this.searchPointer.classList.toggle('visible', shouldShow);
     }
 

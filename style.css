@@ -2,8 +2,6 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
-    /* OS 커서 대신 화면을 따라다니는 파란 화살표(.search-pointer)가 커서 역할을 한다 */
-    cursor: none !important;
 }
 
 body {
@@ -22,17 +20,6 @@ button {
     -webkit-appearance: none;
     background: none;
     border: none;
-}
-
-/* 화살표는 검색 버튼/패널 위나 상세 페이지가 열려 있을 땐 일부러 숨는다
-   (updateSearchPointer 참고) - 그 동안 아무 커서도 안 보이면 곤란하니
-   그 영역에서만 원래 OS 커서를 되살린다 */
-.search-toggle,
-.search-panel,
-.search-panel *,
-.detail-page,
-.detail-page * {
-    cursor: auto !important;
 }
 
 #canvas-container {
@@ -126,7 +113,9 @@ canvas {
     }
 }
 
-/* 마우스 커서를 따라다니며 검색 버튼 쪽을 항상 가리키는 화살표.
+/* 마우스 커서 옆에서 검색 버튼 쪽을 항상 가리키는 화살표. 클릭 판정과는 완전히
+   무관한 순수 시각적 보조 표시일 뿐이다 - 실제 클릭은 항상 커서 좌표로 직접
+   계산한다. 커서와 겹치지 않도록 일정 거리 떨어진 자리에 그린다.
    단순 삼각형(➤)은 방향을 가리키는 느낌이 약해서, 뒤가 오목하게 파인 GPS/나침반
    스타일의 다트 모양 SVG로 바꿔서 "이 방향을 가리키고 있다"는 지시성을 강조한다.
    메인 페이지 파란 배너와 같은 파란색을 써서 같은 계열의 요소임을 암시한다 */
@@ -143,11 +132,7 @@ canvas {
     pointer-events: none;
     opacity: 0;
     filter: drop-shadow(0 2px 10px rgba(58, 62, 242, 0.6));
-    /* 화살표가 실제 커서보다 눈에 띄게 늦게 따라오면 "화살표가 가리키는 곳"과
-       "진짜 클릭되는 곳"이 달라 보여서 헷갈린다는 피드백에 따라, 회전 트랜지션도
-       거의 즉시 반응하도록 짧게 줄였다 (클릭 판정 자체는 이제 화살표 위치와 무관하게
-       클릭 시점 좌표로 다시 계산하지만, 시각적으로도 어긋나 보이지 않게 한다) */
-    transition: opacity 0.25s ease, transform 0.05s linear;
+    transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .search-pointer-svg {
