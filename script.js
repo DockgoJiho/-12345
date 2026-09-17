@@ -129,12 +129,11 @@ class ParticleGallery {
         this.scene.background = new THREE.Color(0xf7f5f1);
         this.scene.fog = new THREE.FogExp2(0xf7f5f1, 0.045);
 
-        // 터널 파라미터 - 링 사이 간격과 링당 카드 수를 촘촘하게 잡아서 벽이 빈틈없이
-        // 화면 전체를 채우는 밀도를 낸다
+        // 터널 파라미터
         this.tunnelRadius = 6.5;
-        this.tunnelRingSpacing = 1.15;
-        this.tunnelRingCount = 40;
-        this.tunnelCardsPerRing = 26;
+        this.tunnelRingSpacing = 2.0;
+        this.tunnelRingCount = 34;
+        this.tunnelCardsPerRing = 16;
         this.tunnelDepth = this.tunnelRingSpacing * this.tunnelRingCount;
         this.driftSpeed = 0.01;
 
@@ -168,8 +167,6 @@ class ParticleGallery {
         THREE.Cache.enabled = true;
         this.textureLoader = new THREE.TextureLoader();
         this.textureLoader.setCrossOrigin('anonymous');
-        // 카드를 만들기 전에 preloadPinImages가 채워두는 미리 로드된 텍스처 캐시
-        this.preloadedTextures = new Map();
 
         // 카드들은 스스로 빛나는 화면처럼 보여야 하므로 장면 조명은 최소한으로만 둔다
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.15);
@@ -206,12 +203,6 @@ class ParticleGallery {
             if (data.success && data.pins && data.pins.length > 0) {
                 console.log(`✓ ${data.pins.length}개의 핀을 로드했습니다`);
                 this.pinsData = data.pins;
-
-                // 카드마다 이미지가 로드되는 대로 하나씩 튀어나오면 터널에 진입하자마자
-                // 지저분하게 채워지는 것처럼 보인다. 그래서 실제 이미지를 전부 미리
-                // 받아둔 다음에야 카드를 만들고 터널을 한꺼번에 보여준다.
-                await this.preloadPinImages(this.pinsData);
-
                 this.hideLoading();
                 this.createParticles();
                 this.playEntranceAnimation();
@@ -226,50 +217,10 @@ class ParticleGallery {
             // 실패 시 샘플 데이터 사용
             console.log('샘플 데이터로 갤러리를 초기화합니다');
             this.pinsData = PINS_DATA;
-            await this.preloadPinImages(this.pinsData);
             this.hideLoading();
             this.createParticles();
             this.animate();
         }
-    }
-
-    /**
-     * 카드를 만들기 전에 모든 핀 이미지를 미리 받아서 this.preloadedTextures에 채워둔다.
-     * createImageCard가 이 맵에서 즉시 꺼내 쓸 수 있으면 placeholder 없이 바로 실제
-     * 이미지로 카드를 만들 수 있어서, 이미지들이 제각각 로드되는 대로 하나씩 나타나는
-     * 대신 터널 진입 시 한꺼번에 나타난다. 개별 이미지 하나가 실패해도 전체를 막지
-     * 않고(그 카드만 나중에 개별 재시도), 진행 상황을 로딩 문구에 표시한다.
-     */
-    preloadPinImages(pins) {
-        this.preloadedTextures = new Map();
-        const uniqueUrls = [...new Set(pins.map((p) => p.image).filter(Boolean))];
-        if (uniqueUrls.length === 0) return Promise.resolve();
-
-        let loadedCount = 0;
-        const updateProgress = () => {
-            loadedCount++;
-            this.updateLoadingText(`🖼️ 이미지를 불러오는 중... (${loadedCount}/${uniqueUrls.length})`);
-        };
-
-        return Promise.all(uniqueUrls.map((imageUrl) => new Promise((resolve) => {
-            const isLocalImage = imageUrl.startsWith('/images/');
-            const loadUrl = isLocalImage ? imageUrl : `/api/image?url=${encodeURIComponent(imageUrl)}`;
-
-            this.textureLoader.load(
-                loadUrl,
-                (texture) => {
-                    this.preloadedTextures.set(imageUrl, texture);
-                    updateProgress();
-                    resolve();
-                },
-                undefined,
-                () => {
-                    // 개별 이미지 로드 실패는 전체를 막지 않는다 - createImageCard가 나중에 재시도한다
-                    updateProgress();
-                    resolve();
-                }
-            );
-        })));
     }
 
     showLoading() {
@@ -278,11 +229,6 @@ class ParticleGallery {
         loading.textContent = '📌 Pinterest 핀을 불러오는 중...';
         loading.id = 'loading-indicator';
         this.container.appendChild(loading);
-    }
-
-    updateLoadingText(text) {
-        const loading = document.getElementById('loading-indicator');
-        if (loading) loading.textContent = text;
     }
 
     hideLoading() {
@@ -339,10 +285,8 @@ class ParticleGallery {
                     spawnRadius,
                     spawnZ,
                     // 카드마다 전체 크기(면적)를 다르게 줘서 획일적인 그리드처럼 보이지 않게 한다.
-                    // 밀도를 높이려고 카드 수를 늘린 만큼, 평균 크기도 살짝 키워서 카드끼리
-                    // 자연스럽게 겹치며 빈틈을 메우게 한다.
                     // 실제 이미지의 가로세로 비율은 로드된 뒤에 알게 되므로 createImageCard에서 반영한다.
-                    sizeScale: 0.85 + Math.random() * 0.65,
+                    sizeScale: 0.75 + Math.random() * 0.6,
                     mesh: null,
                     pinData: {
                         id: pinData.id,
@@ -464,9 +408,7 @@ class ParticleGallery {
 
     /**
      * 이미지를 텍스쳐로 하는 카드 형태의 파티클 생성. 프레임(테두리/캡션 바) 없이
-     * 원본 이미지 자체만 카드로 보여준다. this.preloadedTextures에 미리 로드해둔
-     * 이미지가 있으면(보통의 경우) 즉시 그 실제 이미지로 만들어서 placeholder를 거치지
-     * 않고, 어쩌다 미리 로드에 실패한 것만 예전처럼 개별적으로 재시도한다.
+     * 원본 이미지 자체만 카드로 보여준다.
      */
     createImageCard(particle, pinData) {
         // 포켓몬 카드처럼 두께 없는 완전히 평평한 카드로 표현한다.
@@ -479,15 +421,10 @@ class ParticleGallery {
         const PLACEHOLDER_ASPECTS = [0.75, 0.85, 1, 1.15, 1.3, 1.5];
         let aspect = PLACEHOLDER_ASPECTS[Math.floor(Math.random() * PLACEHOLDER_ASPECTS.length)];
 
-        const preloaded = pinData.image ? this.preloadedTextures.get(pinData.image) : null;
-        const preloadedImg = preloaded ? preloaded.image : null;
-        if (preloadedImg && preloadedImg.naturalWidth && preloadedImg.naturalHeight) {
-            aspect = Math.min(Math.max(preloadedImg.naturalWidth / preloadedImg.naturalHeight, 0.55), 1.8);
-        }
-
         const geometry = new THREE.PlaneGeometry(baseHeight * aspect, baseHeight);
 
-        const canvas = this.renderPlainImageFace(preloadedImg, aspect);
+        // 이미지가 로드되기 전에도 카드 하나를 즉시 보여준다 (무채색 placeholder)
+        const canvas = this.renderPlainImageFace(null, aspect);
         const canvasTexture = new THREE.CanvasTexture(canvas);
         canvasTexture.magFilter = THREE.LinearFilter;
         canvasTexture.minFilter = THREE.LinearMipmapLinearFilter;
@@ -504,13 +441,13 @@ class ParticleGallery {
         const card = new THREE.Mesh(geometry, material);
         card.position.copy(particle.position);
         card.userData.imageUrl = pinData.image;
-        card.userData.isImageLoaded = !!preloadedImg;
+        card.userData.isImageLoaded = false;
         card.userData.particle = particle;
 
-        // 미리 로드된 이미지가 없을 때만(사전 로드가 실패했거나 건너뛴 경우) 개별적으로
-        // 다시 시도한다 - 로컬로 미리 받아둔 이미지(/images/...)는 그대로 사용하고,
-        // 그렇지 않은 경우(Pinterest CDN 원본 URL)는 CORS 문제로 서버 프록시를 거친다
-        if (pinData.image && this.textureLoader && !preloadedImg) {
+        // 실제 Pinterest 이미지 비동기 로드 (mesh 생성 후) - 로컬로 미리 받아둔 이미지
+        // (/images/...)는 그대로 사용하고, 그렇지 않은 경우(Pinterest CDN 원본 URL)는
+        // CORS 문제로 서버 프록시를 거쳐서 로드한다
+        if (pinData.image && this.textureLoader) {
             const isLocalImage = pinData.image.startsWith('/images/');
             const loadUrl = isLocalImage
                 ? pinData.image
