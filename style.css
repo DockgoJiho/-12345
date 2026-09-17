@@ -2,6 +2,8 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    /* OS 커서 대신 화면을 따라다니는 파란 화살표(.search-pointer)가 커서 역할을 한다 */
+    cursor: none !important;
 }
 
 body {
@@ -20,6 +22,18 @@ button {
     -webkit-appearance: none;
     background: none;
     border: none;
+}
+
+/* 화살표는 검색 버튼/패널, 아카이브 링크 위나 상세 페이지가 열려 있을 땐 일부러
+   숨는다(updateSearchPointer 참고) - 그 동안 아무 커서도 안 보이면 곤란하니
+   그 영역에서만 원래 OS 커서를 되살린다 */
+.search-toggle,
+.search-panel,
+.search-panel *,
+.detail-page,
+.detail-page *,
+.back-home-link {
+    cursor: auto !important;
 }
 
 #canvas-container {
