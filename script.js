@@ -129,11 +129,12 @@ class ParticleGallery {
         this.scene.background = new THREE.Color(0xf7f5f1);
         this.scene.fog = new THREE.FogExp2(0xf7f5f1, 0.045);
 
-        // 터널 파라미터
+        // 터널 파라미터 - 링 사이 간격과 링당 카드 수를 촘촘하게 잡아서 벽이 빈틈없이
+        // 화면 전체를 채우는 밀도를 낸다
         this.tunnelRadius = 6.5;
-        this.tunnelRingSpacing = 2.0;
-        this.tunnelRingCount = 34;
-        this.tunnelCardsPerRing = 16;
+        this.tunnelRingSpacing = 1.15;
+        this.tunnelRingCount = 40;
+        this.tunnelCardsPerRing = 26;
         this.tunnelDepth = this.tunnelRingSpacing * this.tunnelRingCount;
         this.driftSpeed = 0.01;
 
@@ -338,8 +339,10 @@ class ParticleGallery {
                     spawnRadius,
                     spawnZ,
                     // 카드마다 전체 크기(면적)를 다르게 줘서 획일적인 그리드처럼 보이지 않게 한다.
+                    // 밀도를 높이려고 카드 수를 늘린 만큼, 평균 크기도 살짝 키워서 카드끼리
+                    // 자연스럽게 겹치며 빈틈을 메우게 한다.
                     // 실제 이미지의 가로세로 비율은 로드된 뒤에 알게 되므로 createImageCard에서 반영한다.
-                    sizeScale: 0.75 + Math.random() * 0.6,
+                    sizeScale: 0.85 + Math.random() * 0.65,
                     mesh: null,
                     pinData: {
                         id: pinData.id,
