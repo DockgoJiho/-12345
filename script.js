@@ -727,10 +727,35 @@ class ParticleGallery {
             if (e.key === 'Shift') this.controls.mouseButtons.MIDDLE = this.defaultMiddleMouseAction;
         });
 
-        // 클릭이 카드를 여는 것으로 오인되지 않도록, 드래그로 끝난 클릭(마우스가 유의미하게
-        // 움직인 경우)은 mousedown 시점 위치를 기억해뒀다가 onClick에서 걸러낸다.
+        // 클릭이 카드를 여는 것으로 오인되지 않도록, 드래그(카메라 회전 등)로 끝난 클릭은
+        // onClick에서 걸러낸다. 예전엔 mousedown 시점 좌표를 저장해뒀다가 click 시점
+        // 좌표와 비교하는 방식이었는데, 실사용(특히 트랙패드)에서 이 mousedown 기록이
+        // 어쩌다 한 번 갱신이 안 되고 그대로 굳어버리는 경우가 있었다 - 그러면 그 이후의
+        // 모든 클릭이 그 낡은 좌표 기준 "먼 거리 드래그"로 계속 오판됐다("첫 클릭만 되고
+        // 그 뒤로 하나도 안 열리는" 원인이 바로 이거였다). 그래서 mousedown 이벤트 자체를
+        // 믿는 대신, mousemove의 event.buttons(지금 실제로 버튼이 눌려있는지)를 기준으로
+        // 매 프레임 스스로 앵커를 확인/복구한다 - mousedown을 놓쳐도 다음 mousemove에서
+        // 바로 스스로 고쳐지므로 낡은 값이 영구히 남을 수 없다.
         window.addEventListener('mousedown', (e) => {
             this.mouseDownPos = { x: e.clientX, y: e.clientY };
+            this.dragOccurred = false;
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (e.buttons & 1) {
+                if (!this.mouseDownPos) {
+                    this.mouseDownPos = { x: e.clientX, y: e.clientY };
+                    this.dragOccurred = false;
+                    return;
+                }
+                const distance = Math.hypot(e.clientX - this.mouseDownPos.x, e.clientY - this.mouseDownPos.y);
+                if (distance > 10) this.dragOccurred = true;
+            } else if (this.mouseDownPos) {
+                // 버튼은 이미 떼어졌는데 앵커가 남아있다면(mouseup을 놓친 경우 등) 정리한다
+                this.mouseDownPos = null;
+            }
+        });
+        window.addEventListener('mouseup', () => {
+            this.mouseDownPos = null;
         });
 
         // 스페이스바를 누르고 있는 동안 터널이 더 빠르게 흘러간다 (입력창에 타이핑 중일 땐 무시)
@@ -950,13 +975,12 @@ class ParticleGallery {
         console.log('[클릭 진단] onClick 호출됨', { x: event.clientX, y: event.clientY, target: event.target && event.target.tagName });
 
         // 드래그(회전 등) 끝에 발생한 클릭은 카드를 여는 클릭이 아니라 카메라 조작이었을
-        // 뿐이므로 무시한다 (실제 클릭은 손이 살짝 떨려도 몇 px 움직이므로 여유 있게 잡는다)
-        if (this.mouseDownPos) {
-            const dragDistance = Math.hypot(event.clientX - this.mouseDownPos.x, event.clientY - this.mouseDownPos.y);
-            if (dragDistance > 10) {
-                console.log('[클릭 진단] 드래그로 판단되어 무시', { dragDistance: dragDistance.toFixed(1) });
-                return;
-            }
+        // 뿐이므로 무시한다. this.dragOccurred는 지금 클릭의 mousedown~mouseup 구간
+        // 동안 실시간으로 갱신된 값이라(setupEventListeners의 mousemove 참고) 낡은
+        // 좌표를 기준으로 재계산하지 않는다.
+        if (this.dragOccurred) {
+            console.log('[클릭 진단] 드래그로 판단되어 무시');
+            return;
         }
 
         // 삭제 확인 팝업이 열려 있을 때 바깥을 클릭하면 그냥 팝업만 닫는다
@@ -1496,10 +1520,11 @@ class ParticleGallery {
     /**
      * 우측 상단 검색 버튼 쪽을 항상 가리키는 화살표를 매 프레임 갱신한다. 클릭 판정과는
      * 완전히 무관한 순수 시각적 보조 표시일 뿐이다(실제 클릭은 항상 이벤트의 실제 좌표로
-     * 직접 계산한다) - 그래서 커서 위치에 딱 붙이거나 촉 끝을 커서에 맞추는 등의 정렬은
-     * 하지 않고, 실제 OS 커서와 겹치지 않도록 일정 거리 떨어진 자리에 그린다. 상세 페이지가
-     * 열려 있거나 검색 패널/버튼, 아카이브 링크 위에 커서가 있을 땐 굳이 가리킬 필요가
-     * 없으니 숨긴다.
+     * 직접 계산한다). 지금은 OS 커서를 숨기고 이 화살표가 커서 역할을 대신하므로, 실제
+     * 커서 좌표에 정확히 겹치게 그린다 - 그렇지 않으면 화살표는 빈 공간에 있는데 그 화살표
+     * 위치와 다른 곳(보이지 않는 실제 커서 자리)에서 호버/클릭이 일어나는 것처럼 보여
+     * 혼란스럽다. 상세 페이지가 열려 있거나 검색 패널/버튼, 아카이브 링크 위에 커서가
+     * 있을 땐 굳이 가리킬 필요가 없으니 숨긴다.
      */
     updateSearchPointer() {
         if (!this.searchPointer) return;
@@ -1507,10 +1532,8 @@ class ParticleGallery {
         this.pointerPos.x = this.pointerTarget.x;
         this.pointerPos.y = this.pointerTarget.y;
 
-        // 커서와 겹치지 않도록 대각선으로 일정 거리 띄운 자리에 화살표를 그린다
-        const CURSOR_OFFSET = 34;
-        const anchorX = this.pointerPos.x + CURSOR_OFFSET;
-        const anchorY = this.pointerPos.y + CURSOR_OFFSET;
+        const anchorX = this.pointerPos.x;
+        const anchorY = this.pointerPos.y;
 
         const rect = this.searchToggle.getBoundingClientRect();
         const targetX = rect.left + rect.width / 2;
