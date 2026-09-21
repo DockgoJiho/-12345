@@ -9,7 +9,13 @@
 <body>
     <div id="canvas-container"></div>
 
-    <a href="index.html" class="back-home-link">← ARCHIVE</a>
+    <a href="index.html" class="back-home-link">← HOME</a>
+
+    <!-- 다른 사람의 터널을 보고 있을 때만 나타나는 표시 + 팔로우 버튼 -->
+    <div id="tunnel-owner-badge" class="tunnel-owner-badge hidden">
+        <span id="tunnel-owner-text"></span>
+        <button id="tunnel-follow-btn" class="tunnel-follow-btn hidden">FOLLOW</button>
+    </div>
 
     <!-- 터널 안에서 키워드를 태그처럼 추가하며 좁혀가는 검색 패널 -->
     <button id="search-toggle" class="search-toggle" aria-label="검색">
@@ -96,6 +102,8 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js"></script>
+    <script src="supabase-client.js"></script>
     <script src="data.js"></script>
     <script src="script.js" crossorigin="anonymous"></script>
 </body>

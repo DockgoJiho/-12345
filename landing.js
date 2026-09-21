@@ -115,18 +115,11 @@ function createMarqueeCard(pin) {
 
 async function initMarquee() {
     const track = document.getElementById('marquee-track');
-    const pinCountEl = document.getElementById('pin-count');
-    const dateEl = document.getElementById('banner-date');
-
-    const today = new Date();
-    dateEl.textContent = `${today.getFullYear()}.${String(today.getMonth() + 1).padStart(2, '0')}.${String(today.getDate()).padStart(2, '0')}`;
 
     try {
         const res = await fetch('/api/pins');
         const data = await res.json();
         const pins = (data.pins || []).filter((p) => p.image && p.image.startsWith('/images/'));
-
-        pinCountEl.textContent = `${data.total || pins.length} pins`;
 
         // 이 브라우저에서 최근에 자세히 본 이미지를 앞쪽에 우선 배치하고,
         // 나머지는 무작위 샘플로 채운다

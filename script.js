@@ -31,6 +31,14 @@ class ParticleGallery {
         this.pointerHasMoved = false;
         this.showPointerHint = false;
 
+        // 좌상단 HOME 링크에 다가가면 화살표가 검색 방향을 계속 가리키지 않고,
+        // 일반적인 마우스 커서처럼 고정된 방향(왼쪽 위)으로 미리 바뀐다. 박스 경계에
+        // 닿는 순간 갑자기 홱 바뀌면 너무 급해 보이므로, 실제 경계보다 넉넉히 앞선
+        // 여유 반경(NEAR_HOME_PADDING) 안에만 들어와도 미리 전환되게 한다.
+        this.backHomeLink = document.querySelector('.back-home-link');
+        this.overBackHomeLink = false;
+        this.NEAR_HOME_PADDING = 90;
+
         // 이미지 우클릭 → 삭제 확인 팝업
         this.deleteConfirm = document.getElementById('delete-confirm');
         this.deleteConfirmCancel = document.getElementById('delete-confirm-cancel');
@@ -50,12 +58,126 @@ class ParticleGallery {
         this.driftBoostActive = false;
         this.driftBoostMultiplier = 1;
 
+        // 로그인한 사용자 정보 (다른 사람의 터널을 구경 중인지 판단하는 기준).
+        // 어떤 핀이 "내 것"인지는 항상 그 핀의 ownerId를 currentUserId와 비교해서
+        // 판정한다 - 터널 전체가 아니라 핀 단위로 판정해야 직접 핀 링크(?pin=)로
+        // 들어온 경우에도 항상 정확하다.
+        this.currentUserId = null;
+        this.currentUsername = null;
+        this.viewingUsername = null;
+        this.viewingUserId = null;
+        this.identityReady = this.initIdentity();
+
+        this.tunnelOwnerBadge = document.getElementById('tunnel-owner-badge');
+        this.tunnelOwnerText = document.getElementById('tunnel-owner-text');
+        this.tunnelFollowBtn = document.getElementById('tunnel-follow-btn');
+        this.isFollowingViewedUser = false;
+        if (this.tunnelFollowBtn) {
+            this.tunnelFollowBtn.addEventListener('click', () => this.toggleFollowViewedUser());
+        }
+
         this.init();
         this.setupEventListeners();
         this.loadPinsFromAPI();
         this.openDirectPinIfLinked();
         this.openSearchFromQueryParam();
         this.maybeShowSearchHint();
+    }
+
+    /**
+     * 로그인 세션이 있으면 현재 사용자 id/username을 가져온다.
+     * 보고 있는 터널이 누구 것인지와는 별개로, 페이지 로드 초반에 한 번만 확인한다.
+     */
+    async initIdentity() {
+        if (typeof supabaseClient === 'undefined') return;
+        try {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            if (!session) return;
+            this.currentUserId = session.user.id;
+
+            const { data: profile } = await supabaseClient
+                .from('profiles')
+                .select('username')
+                .eq('id', session.user.id)
+                .maybeSingle();
+            this.currentUsername = profile ? profile.username : null;
+        } catch (err) {
+            console.warn('로그인 상태 확인 실패:', err);
+        }
+    }
+
+    /**
+     * 지금 보고 있는 핀이 로그인한 나의 소유인지 확인한다.
+     * 실제 쓰기 권한은 Supabase RLS가 강제하므로, 이건 어디까지나 UI를 미리
+     * 맞춰두기 위한 판정이다.
+     */
+    isOwnPin(pinData) {
+        return !!(this.currentUserId && pinData && pinData.ownerId && this.currentUserId === pinData.ownerId);
+    }
+
+    /**
+     * 다른 사람의 터널을 보고 있을 때 상단에 "@username의 아카이브" 표시와
+     * 팔로우 버튼을 띄운다.
+     */
+    async updateTunnelOwnerBadge() {
+        if (!this.tunnelOwnerBadge) return;
+
+        if (!this.viewingUsername || (this.currentUserId && this.currentUserId === this.viewingUserId)) {
+            this.tunnelOwnerBadge.classList.add('hidden');
+            return;
+        }
+
+        this.tunnelOwnerBadge.classList.remove('hidden');
+        this.tunnelOwnerText.textContent = `@${this.viewingUsername}의 아카이브`;
+
+        if (!this.currentUserId || typeof supabaseClient === 'undefined') {
+            this.tunnelFollowBtn.classList.add('hidden');
+            return;
+        }
+
+        this.tunnelFollowBtn.classList.remove('hidden');
+        try {
+            const { data } = await supabaseClient
+                .from('follows')
+                .select('follower_id')
+                .eq('follower_id', this.currentUserId)
+                .eq('followee_id', this.viewingUserId)
+                .maybeSingle();
+            this.isFollowingViewedUser = !!data;
+            this.renderFollowButton();
+        } catch (err) {
+            console.warn('팔로우 상태 확인 실패:', err);
+        }
+    }
+
+    renderFollowButton() {
+        this.tunnelFollowBtn.textContent = this.isFollowingViewedUser ? 'FOLLOWING' : 'FOLLOW';
+        this.tunnelFollowBtn.classList.toggle('following', this.isFollowingViewedUser);
+    }
+
+    async toggleFollowViewedUser() {
+        if (!this.currentUserId || !this.viewingUserId) return;
+
+        try {
+            if (this.isFollowingViewedUser) {
+                const { error } = await supabaseClient
+                    .from('follows')
+                    .delete()
+                    .eq('follower_id', this.currentUserId)
+                    .eq('followee_id', this.viewingUserId);
+                if (error) throw error;
+                this.isFollowingViewedUser = false;
+            } else {
+                const { error } = await supabaseClient
+                    .from('follows')
+                    .insert({ follower_id: this.currentUserId, followee_id: this.viewingUserId });
+                if (error && error.code !== '23505') throw error;
+                this.isFollowingViewedUser = true;
+            }
+            this.renderFollowButton();
+        } catch (err) {
+            console.warn('팔로우 상태 변경 실패:', err);
+        }
     }
 
     /**
@@ -113,6 +235,7 @@ class ParticleGallery {
         if (!pinId) return;
 
         try {
+            await this.identityReady;
             const response = await fetch(`/api/pin/${encodeURIComponent(pinId)}`);
             const data = await response.json();
             if (data.success && data.pin) {
@@ -192,7 +315,8 @@ class ParticleGallery {
     async loadPinsFromAPI() {
         try {
             console.log('📌 Pinterest 데이터를 서버에서 로드 중...');
-            const response = await fetch('/api/pins');
+            const requestedUser = new URLSearchParams(window.location.search).get('user') || '';
+            const response = await fetch(`/api/pins?user=${encodeURIComponent(requestedUser)}`);
 
             if (!response.ok) {
                 throw new Error(`API Error: ${response.status}`);
@@ -200,9 +324,15 @@ class ParticleGallery {
 
             const data = await response.json();
 
-            if (data.success && data.pins && data.pins.length > 0) {
-                console.log(`✓ ${data.pins.length}개의 핀을 로드했습니다`);
-                this.pinsData = data.pins;
+            if (data.success) {
+                console.log(`✓ ${(data.pins || []).length}개의 핀을 로드했습니다`);
+                this.pinsData = data.pins || [];
+                this.viewingUsername = data.owner ? data.owner.username : null;
+                this.viewingUserId = data.owner ? data.owner.id : null;
+
+                await this.identityReady;
+                this.updateTunnelOwnerBadge();
+
                 this.hideLoading();
                 this.createParticles();
                 this.playEntranceAnimation();
@@ -247,7 +377,23 @@ class ParticleGallery {
         this.container.appendChild(errorEl);
     }
 
+    showEmptyTunnelMessage() {
+        const emptyEl = document.createElement('div');
+        emptyEl.className = 'loading';
+        emptyEl.textContent = '아직 저장된 핀이 없습니다.';
+        emptyEl.id = 'empty-tunnel-indicator';
+        this.container.appendChild(emptyEl);
+    }
+
     createParticles() {
+        // 새로 가입해서 아직 핀을 하나도 안 가져온 계정이거나, ?user= 없이 들어와서
+        // 기본 아카이브가 설정 안 된 경우 pinsData가 비어 있을 수 있다 - 카드를 0개로
+        // 나눠 배치하려 하면(index % 0) 바로 아래에서 에러가 나므로 여기서 막는다.
+        if (!this.pinsData || this.pinsData.length === 0) {
+            this.showEmptyTunnelMessage();
+            return;
+        }
+
         // 원통형 아카이브 터널: 여러 겹의 고리(ring)를 따라 카드를 촘촘히 배치한다.
         // 카메라가 터널 안쪽 축을 따라 이동하며, 사방이 화면으로 둘러싸인 느낌을 준다.
         const ringCount = this.tunnelRingCount;
@@ -822,7 +968,7 @@ class ParticleGallery {
 
         try {
             const query = this.searchTags.join(' ');
-            const response = await fetch(`/api/pins/search?q=${encodeURIComponent(query)}`);
+            const response = await fetch(`/api/pins/search?q=${encodeURIComponent(query)}&user=${encodeURIComponent(this.viewingUsername || '')}`);
             const data = await response.json();
 
             // 태그를 빠르게 추가/삭제하면 응답이 뒤섞여 도착할 수 있으므로, 가장 마지막 요청만 반영한다
@@ -874,23 +1020,15 @@ class ParticleGallery {
     }
 
     onClick(event) {
-        // 클릭이 계속 안 되는 원인을 재현 환경에서 못 찾아서, 실제로 재현될 때 콘솔에서
-        // 바로 원인을 볼 수 있도록 임시로 남겨두는 진단 로그 - onClick 자체가 호출되는지부터 확인한다
-        console.log('[클릭 진단] onClick 호출됨', { x: event.clientX, y: event.clientY, target: event.target && event.target.tagName });
-
         // 드래그(회전 등) 끝에 발생한 클릭은 카드를 여는 클릭이 아니라 카메라 조작이었을
         // 뿐이므로 무시한다. this.dragOccurred는 지금 클릭의 mousedown~mouseup 구간
         // 동안 실시간으로 갱신된 값이라(setupEventListeners의 mousemove 참고) 낡은
         // 좌표를 기준으로 재계산하지 않는다.
-        if (this.dragOccurred) {
-            console.log('[클릭 진단] 드래그로 판단되어 무시');
-            return;
-        }
+        if (this.dragOccurred) return;
 
         // 삭제 확인 팝업이 열려 있을 때 바깥을 클릭하면 그냥 팝업만 닫는다
         // (그 클릭이 이어서 카드를 열어버리면 혼란스러우므로 거기서 끝낸다)
         if (!this.deleteConfirm.classList.contains('hidden')) {
-            console.log('[클릭 진단] 삭제 확인 팝업이 열려있어서 무시');
             if (!this.deleteConfirm.contains(event.target)) this.hideDeleteConfirm();
             return;
         }
@@ -898,12 +1036,10 @@ class ParticleGallery {
         // 상세 페이지가 열려 있을 때: 카드 바깥(뒷배경)을 클릭하면 닫고,
         // 카드 안쪽 클릭(메모 입력, 닫기 버튼 등)은 카드 열기 로직과 무관하므로 무시한다.
         if (this.detailPage.contains(event.target)) {
-            console.log('[클릭 진단] 클릭 대상이 상세페이지 내부라서 무시', { isBackdrop: event.target === this.detailPage });
             if (event.target === this.detailPage) this.closeDetailPage();
             return;
         }
         if (this.searchPanel.contains(event.target) || this.searchToggle.contains(event.target)) {
-            console.log('[클릭 진단] 클릭 대상이 검색 UI라서 무시');
             return;
         }
 
@@ -913,11 +1049,7 @@ class ParticleGallery {
         // 다시 레이캐스트해서 항상 정확하게 판정한다 - 화살표는 순전히 시각적 보조
         // 표시일 뿐이라 이 판정과는 아무 관계가 없다.
         const intersects = this.raycastCardsNear(event.clientX, event.clientY);
-        if (intersects.length === 0) {
-            console.log('[클릭 진단] 레이캐스트가 카드에 안 맞음', { x: event.clientX, y: event.clientY, target: event.target && event.target.tagName });
-            return;
-        }
-        console.log('[클릭 진단] 카드 열기 성공');
+        if (intersects.length === 0) return;
 
         const pinData = intersects[0].object.userData.particle.pinData;
         this.showDetailPage(pinData);
@@ -1049,6 +1181,11 @@ class ParticleGallery {
         if (!this.hoveredParticle) return;
 
         event.preventDefault();
+
+        // 다른 사람의 핀은 삭제 확인 팝업 자체를 띄우지 않는다 (RLS가 실제 삭제를 막아주긴
+        // 하지만, 애초에 지울 수 없는 걸 지울 수 있는 것처럼 보여줄 이유가 없다)
+        if (!this.isOwnPin(this.hoveredParticle.pinData)) return;
+
         this.pendingDeleteParticle = this.hoveredParticle;
         this.showDeleteConfirm(event.clientX, event.clientY);
     }
@@ -1074,13 +1211,11 @@ class ParticleGallery {
         if (!particle) return;
 
         this.hideDeleteConfirm();
+        if (!this.isOwnPin(particle.pinData)) return;
 
         try {
-            const response = await fetch(`/api/pins/${encodeURIComponent(particle.pinData.id)}`, {
-                method: 'DELETE'
-            });
-            const data = await response.json();
-            if (!data.success) throw new Error(data.error || '삭제 실패');
+            const { error } = await supabaseClient.from('pins').delete().eq('id', particle.pinData.id);
+            if (error) throw error;
             this.removeParticleFromScene(particle);
         } catch (err) {
             console.error('핀 삭제 실패:', err);
@@ -1131,6 +1266,11 @@ class ParticleGallery {
 
     showDetailPage(pinData) {
         this.trackRecentlyViewed(pinData);
+
+        // 다른 사람의 핀이면 메모/키워드 편집 UI를 숨긴다 (실제 쓰기 차단은 RLS가 담당)
+        this.currentDetailIsOwn = this.isOwnPin(pinData);
+        this.detailPage.classList.toggle('read-only', !this.currentDetailIsOwn);
+        this.detailMemo.readOnly = !this.currentDetailIsOwn;
 
         // 이미지가 있으면 표시, 없으면 무채색 플레이스홀더
         const detailImg = document.getElementById('detail-image');
@@ -1343,6 +1483,7 @@ class ParticleGallery {
      * 사용자 키워드 추가/삭제 - 즉시 렌더링하고 서버에 저장한다
      */
     addDetailTag(text) {
+        if (!this.currentDetailIsOwn) return;
         const tag = text.trim();
         if (!tag || this.currentDetailCustomTags.includes(tag)) return;
 
@@ -1352,21 +1493,20 @@ class ParticleGallery {
     }
 
     removeDetailTag(index) {
+        if (!this.currentDetailIsOwn) return;
         this.currentDetailCustomTags.splice(index, 1);
         this.renderDetailTags();
         this.saveDetailTags();
     }
 
     async saveDetailTags() {
+        if (!this.currentDetailIsOwn) return;
         const pinId = this.currentDetailPinId;
         const tags = this.currentDetailCustomTags.slice();
 
         try {
-            await fetch('/api/tags', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: pinId, tags })
-            });
+            const { error } = await supabaseClient.from('pins').update({ custom_tags: tags }).eq('id', pinId);
+            if (error) throw error;
             this.particles.forEach((p) => {
                 if (p.pinData.id === pinId) p.pinData.customTags = tags.slice();
             });
@@ -1376,9 +1516,10 @@ class ParticleGallery {
     }
 
     /**
-     * 메모 입력 - 잠시 멈추면(500ms) 서버에 저장한다
+     * 메모 입력 - 잠시 멈추면(500ms) 저장한다
      */
     onMemoInput() {
+        if (!this.currentDetailIsOwn) return;
         const pinId = this.currentDetailPinId;
         const memoText = this.detailMemo.value;
         const statusEl = document.getElementById('detail-memo-status');
@@ -1387,11 +1528,8 @@ class ParticleGallery {
         clearTimeout(this.memoSaveTimer);
         this.memoSaveTimer = setTimeout(async () => {
             try {
-                await fetch('/api/memo', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ id: pinId, memo: memoText })
-                });
+                const { error } = await supabaseClient.from('pins').update({ memo: memoText }).eq('id', pinId);
+                if (error) throw error;
                 // 같은 핀을 가리키는 다른 카드들의 메모리 상의 데이터도 갱신
                 this.particles.forEach((p) => {
                     if (p.pinData.id === pinId) p.pinData.memo = memoText;
@@ -1437,28 +1575,47 @@ class ParticleGallery {
         const anchorX = this.pointerPos.x;
         const anchorY = this.pointerPos.y;
 
-        const rect = this.searchToggle.getBoundingClientRect();
-        const targetX = rect.left + rect.width / 2;
-        const targetY = rect.top + rect.height / 2;
-        const distanceToTarget = Math.hypot(targetX - anchorX, targetY - anchorY);
+        if (this.backHomeLink) {
+            const homeRect = this.backHomeLink.getBoundingClientRect();
+            const dx = Math.max(homeRect.left - anchorX, 0, anchorX - homeRect.right);
+            const dy = Math.max(homeRect.top - anchorY, 0, anchorY - homeRect.bottom);
+            this.overBackHomeLink = Math.hypot(dx, dy) <= this.NEAR_HOME_PADDING;
+        }
 
-        // 검색 버튼에 아주 가까워지면(그 위에 있거나 거의 다 왔을 때) 각도 계산이
-        // 0에 가까운 거리로 나뉘어 미세한 마우스 떨림에도 각도가 홱홱 튄다 - 그 구간에서는
-        // 새로 계산하지 않고 마지막 각도를 그대로 유지해서 떨림을 없앤다.
-        if (distanceToTarget > 30) {
-            const rawAngle = Math.atan2(targetY - anchorY, targetX - anchorX) * 180 / Math.PI;
-
-            // 각도가 -180/180 경계를 넘나들 때 CSS transition이 반대 방향으로 크게
-            // 돌아버리는 것을 막기 위해, 이전 각도를 기준으로 가장 가까운 방향으로만 보정한다
-            let delta = rawAngle - (this.pointerAngle % 360);
+        if (this.overBackHomeLink) {
+            // HOME 링크 위에서는 검색 방향을 가리키는 대신, 일반 마우스 커서처럼
+            // 왼쪽 위를 향하는 고정된 각도로 되돌아온다 (0도 = 오른쪽 기준이므로 -135도)
+            let delta = -135 - (this.pointerAngle % 360);
             while (delta > 180) delta -= 360;
             while (delta < -180) delta += 360;
             this.pointerAngle += delta;
+        } else {
+            const rect = this.searchToggle.getBoundingClientRect();
+            const targetX = rect.left + rect.width / 2;
+            const targetY = rect.top + rect.height / 2;
+            const distanceToTarget = Math.hypot(targetX - anchorX, targetY - anchorY);
+
+            // 검색 버튼에 아주 가까워지면(그 위에 있거나 거의 다 왔을 때) 각도 계산이
+            // 0에 가까운 거리로 나뉘어 미세한 마우스 떨림에도 각도가 홱홱 튄다 - 그 구간에서는
+            // 새로 계산하지 않고 마지막 각도를 그대로 유지해서 떨림을 없앤다.
+            if (distanceToTarget > 30) {
+                const rawAngle = Math.atan2(targetY - anchorY, targetX - anchorX) * 180 / Math.PI;
+
+                // 각도가 -180/180 경계를 넘나들 때 CSS transition이 반대 방향으로 크게
+                // 돌아버리는 것을 막기 위해, 이전 각도를 기준으로 가장 가까운 방향으로만 보정한다
+                let delta = rawAngle - (this.pointerAngle % 360);
+                while (delta > 180) delta -= 360;
+                while (delta < -180) delta += 360;
+                this.pointerAngle += delta;
+            }
         }
 
         this.searchPointer.style.left = `${anchorX}px`;
         this.searchPointer.style.top = `${anchorY}px`;
-        this.searchPointer.style.transform = `translate(-50%, -50%) rotate(${this.pointerAngle}deg)`;
+        // translate가 -97%/-50%라서, 실제 클릭 지점(anchorX, anchorY)에 오는 건 박스 중앙이
+        // 아니라 화살표의 뾰족한 끝이다 - CSS의 transform-origin(97% 50%)도 같은 지점이라
+        // 이후 rotate는 그 끝을 축으로 돌아서, 회전해도 끝은 항상 실제 커서 자리에 고정된다
+        this.searchPointer.style.transform = `translate(-97%, -50%) rotate(${this.pointerAngle}deg)`;
 
         // 첫 방문 힌트가 떠 있는 동안, 화살표가 가리키는 방향으로 조금 더 나간 자리에
         // "SEARCH →" 라벨을 같이 따라다니게 한다
@@ -1524,7 +1681,7 @@ class ParticleGallery {
     }
 }
 
-// 페이지 로드 후 갤러리 초기화
+// 페이지 로드 후 갤러리 초기화 (디버깅 콘솔에서 접근할 수 있도록 전역에도 붙여둔다)
 document.addEventListener('DOMContentLoaded', () => {
-    new ParticleGallery();
+    window.__galleryInstance = new ParticleGallery();
 });
