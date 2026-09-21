@@ -23,6 +23,28 @@ const PORT = process.env.PORT || 3000;
 // 미들웨어
 app.use(cors());
 app.use(express.json());
+
+// express.static이 프로젝트 루트를 통째로 서빙하다 보니, 프론트엔드가 아닌 서버 전용
+// 파일들(server.js 자체, 1회용 마이그레이션 스크립트, package.json, 마이그레이션 이전
+// 원본 데이터 등)까지 누구나 주소로 직접 열어볼 수 있었다 - 민감한 값(키 등)은 전부
+// 환경변수로만 관리해서 직접적인 유출은 아니었지만, 백엔드 로직/내부 파일 목록이 그대로
+// 노출되는 건 막는 게 맞다. .env는 배포 환경에 실제 파일로 올라가지 않으니 이미 안전하다.
+const PUBLIC_STATIC_BLOCKLIST = new Set([
+    'server.js',
+    'migrate_to_supabase.mjs',
+    'package.json',
+    'package-lock.json',
+    'local_pins.json',
+    'categories.js'
+]);
+app.use((req, res, next) => {
+    const requestedFile = req.path.replace(/^\//, '');
+    if (PUBLIC_STATIC_BLOCKLIST.has(requestedFile)) {
+        return res.status(404).end();
+    }
+    next();
+});
+
 app.use(express.static(path.join(__dirname), {
     etag: false,
     lastModified: false,
