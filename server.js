@@ -135,6 +135,15 @@ function supabaseForRequest(req) {
 // 가져와서 그 안에서 섞는다. 정확한 총 개수는 행 데이터를 전혀 내려받지 않는 count 쿼리로 별도 조회한다.
 const PINS_SAMPLE_POOL_SIZE = 600;
 
+// Render 무료 티어 ↔ Supabase 간 왕복 자체가 (요청마다 편차는 있지만) 수 초씩 걸릴 때가 있어서,
+// 쿼리를 아무리 줄여도 그 왕복 시간 자체는 못 없앤다. 같은 아카이브를 짧은 시간 안에 여러 번
+// 요청하는 경우(재방문, 새로고침, 시연 등)엔 Supabase를 아예 다시 거치지 않도록 메모리에
+// 잠깐 캐시해둔다 - 메모/키워드 수정은 프론트엔드가 Supabase에 직접 쓰므로, 캐시가 살아있는
+// 동안은 방금 고친 값이 다른 방문자에게 한 박자 늦게 보일 수 있지만(최대 CACHE_TTL_MS)
+// 시연/수업용 트래픽 규모에선 감수할 만한 트레이드오프다.
+const PINS_CACHE_TTL_MS = 20000;
+const pinsCache = new Map(); // ownerId -> { rows, total, expiresAt }
+
 app.get('/api/pins', async (req, res) => {
     try {
         const owner = await resolveOwner(req.query.user);
@@ -142,27 +151,33 @@ app.get('/api/pins', async (req, res) => {
             return res.json({ success: true, source: 'supabase', count: 0, total: 0, owner: null, pins: [] });
         }
 
-        const [{ data: rows, error: rowsError }, { count: totalCount, error: countError }] = await Promise.all([
-            supabaseAnon
-                .from('pins')
-                .select('*')
-                .eq('owner_id', owner.id)
-                .not('image', 'is', null)
-                .neq('image', '')
-                .limit(PINS_SAMPLE_POOL_SIZE),
-            supabaseAnon
-                .from('pins')
-                .select('id', { count: 'exact', head: true })
-                .eq('owner_id', owner.id)
-                .not('image', 'is', null)
-                .neq('image', '')
-        ]);
+        let cached = pinsCache.get(owner.id);
+        if (!cached || cached.expiresAt < Date.now()) {
+            const [{ data: rows, error: rowsError }, { count: totalCount, error: countError }] = await Promise.all([
+                supabaseAnon
+                    .from('pins')
+                    .select('*')
+                    .eq('owner_id', owner.id)
+                    .not('image', 'is', null)
+                    .neq('image', '')
+                    .limit(PINS_SAMPLE_POOL_SIZE),
+                supabaseAnon
+                    .from('pins')
+                    .select('id', { count: 'exact', head: true })
+                    .eq('owner_id', owner.id)
+                    .not('image', 'is', null)
+                    .neq('image', '')
+            ]);
 
-        if (rowsError) throw rowsError;
-        if (countError) throw countError;
+            if (rowsError) throw rowsError;
+            if (countError) throw countError;
 
-        // 매 요청마다 무작위로 섞어서 다양하게 보여준다
-        const shuffled = [...(rows || [])];
+            cached = { rows: rows || [], total: totalCount || 0, expiresAt: Date.now() + PINS_CACHE_TTL_MS };
+            pinsCache.set(owner.id, cached);
+        }
+
+        // 매 요청마다 무작위로 섞어서 다양하게 보여준다 (캐시된 표본 안에서도 매번 새로 섞는다)
+        const shuffled = [...cached.rows];
         for (let i = shuffled.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -170,7 +185,7 @@ app.get('/api/pins', async (req, res) => {
 
         const pins = shuffled.slice(0, 200).map(mapPin);
 
-        res.json({ success: true, source: 'supabase', count: pins.length, total: totalCount || 0, owner, pins });
+        res.json({ success: true, source: 'supabase', count: pins.length, total: cached.total, owner, pins });
     } catch (error) {
         console.error('핀 목록 조회 실패:', error.message);
         res.status(500).json({ error: '핀 목록을 불러오지 못했습니다' });
