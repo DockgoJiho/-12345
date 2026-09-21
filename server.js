@@ -130,6 +130,11 @@ function supabaseForRequest(req) {
 /**
  * 특정 사용자의 저장된 핀 목록 가져오기 (?user=사용자명, 생략 시 기본 아카이브)
  */
+// 터널에는 한 번에 최대 200개만 보여주므로, 매번 소유자의 핀 전체(수천 개까지 갈 수 있다)를
+// 통째로 내려받을 필요가 없다 - 무작위 표본을 뽑기에 충분히 큰 한 페이지(SAMPLE_POOL_SIZE)만
+// 가져와서 그 안에서 섞는다. 정확한 총 개수는 행 데이터를 전혀 내려받지 않는 count 쿼리로 별도 조회한다.
+const PINS_SAMPLE_POOL_SIZE = 600;
+
 app.get('/api/pins', async (req, res) => {
     try {
         const owner = await resolveOwner(req.query.user);
@@ -137,11 +142,27 @@ app.get('/api/pins', async (req, res) => {
             return res.json({ success: true, source: 'supabase', count: 0, total: 0, owner: null, pins: [] });
         }
 
-        const rows = await fetchAllPins(owner.id);
+        const [{ data: rows, error: rowsError }, { count: totalCount, error: countError }] = await Promise.all([
+            supabaseAnon
+                .from('pins')
+                .select('*')
+                .eq('owner_id', owner.id)
+                .not('image', 'is', null)
+                .neq('image', '')
+                .limit(PINS_SAMPLE_POOL_SIZE),
+            supabaseAnon
+                .from('pins')
+                .select('id', { count: 'exact', head: true })
+                .eq('owner_id', owner.id)
+                .not('image', 'is', null)
+                .neq('image', '')
+        ]);
 
-        // 이미지가 있는 핀 중에서 매 요청마다 무작위로 섞어서(최대 200개) 다양하게 보여준다
-        const pool = rows.filter((pin) => !!pin.image);
-        const shuffled = [...pool];
+        if (rowsError) throw rowsError;
+        if (countError) throw countError;
+
+        // 매 요청마다 무작위로 섞어서 다양하게 보여준다
+        const shuffled = [...(rows || [])];
         for (let i = shuffled.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -149,7 +170,7 @@ app.get('/api/pins', async (req, res) => {
 
         const pins = shuffled.slice(0, 200).map(mapPin);
 
-        res.json({ success: true, source: 'supabase', count: pins.length, total: pool.length, owner, pins });
+        res.json({ success: true, source: 'supabase', count: pins.length, total: totalCount || 0, owner, pins });
     } catch (error) {
         console.error('핀 목록 조회 실패:', error.message);
         res.status(500).json({ error: '핀 목록을 불러오지 못했습니다' });
