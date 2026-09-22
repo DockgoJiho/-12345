@@ -15,9 +15,14 @@
         <div id="auth-logged-in" class="auth-logged-in hidden">
             <a id="auth-my-archive" class="auth-btn" href="gallery.html">MY ARCHIVE</a>
             <span id="auth-username" class="auth-username"></span>
+            <button id="pinterest-connect-btn" class="auth-btn-text">Connect Pinterest</button>
             <button id="auth-logout-btn" class="auth-btn-text">LOG OUT</button>
         </div>
     </div>
+
+    <!-- Pinterest 연동/동기화 결과를 한 줄로 알려주는 토스트 (연동 완료 후 리다이렉트되어
+         돌아왔을 때, 또는 동기화 버튼을 눌렀을 때 잠깐 나타났다 사라진다) -->
+    <div id="pinterest-toast" class="pinterest-toast hidden"></div>
 
     <!-- 로그인 / 회원가입 모달 -->
     <div id="auth-modal" class="auth-modal hidden">

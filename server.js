@@ -10,6 +10,7 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const crypto = require('crypto');
 require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
@@ -19,6 +20,10 @@ const { CATEGORY_TAXONOMY, getCategoryByKey } = require('./categories');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Render 등 프록시 뒤에서 돌 때 req.protocol이 항상 http로 보이는 문제를 막는다 -
+// Pinterest OAuth의 redirect_uri는 프로토콜까지 정확히 일치해야 하므로 중요하다.
+app.set('trust proxy', 1);
 
 // 미들웨어
 app.use(cors());
@@ -55,21 +60,38 @@ app.use(express.static(path.join(__dirname), {
 const PINTEREST_API_BASE = 'https://api.pinterest.com/v5';
 const ACCESS_TOKEN = process.env.PINTEREST_ACCESS_TOKEN;
 
+// 실계정 연동(OAuth) - developers.pinterest.com에서 발급받은 값. 심사(Standard access)가
+// 끝나기 전까지는 개발자 본인 계정으로만 동작한다.
+const PINTEREST_CLIENT_ID = process.env.PINTEREST_CLIENT_ID;
+const PINTEREST_CLIENT_SECRET = process.env.PINTEREST_CLIENT_SECRET;
+const PINTEREST_OAUTH_SCOPES = 'boards:read,pins:read';
+
+const PLACEHOLDER_ENV_VALUES = new Set(['your_client_id_here', 'your_client_secret_here', '']);
+function isPinterestOAuthConfigured() {
+    return !PLACEHOLDER_ENV_VALUES.has(PINTEREST_CLIENT_ID || '')
+        && !PLACEHOLDER_ENV_VALUES.has(PINTEREST_CLIENT_SECRET || '');
+}
+
+// OAuth 왕복(사용자가 Pinterest 동의 화면에 다녀오는 수십 초~몇 분) 동안만 필요한 상태라
+// DB가 아니라 메모리에 잠깐 들고 있는다 - state로 "누가 연동을 시작했는지"를 복원하고,
+// 콜백에서 그 사용자의 JWT로 pinterest_connections에 쓴다(서버가 별도 관리자 키를
+// 갖지 않아도 되게 하기 위함). 서버가 재시작되면 진행 중이던 시도는 무효화되고, 다시
+// 버튼을 누르면 된다.
+const pendingPinterestStates = new Map();
+const PINTEREST_STATE_TTL_MS = 10 * 60 * 1000;
+function cleanupExpiredPinterestStates() {
+    const now = Date.now();
+    for (const [state, entry] of pendingPinterestStates) {
+        if (entry.expiresAt < now) pendingPinterestStates.delete(state);
+    }
+}
+
 // ?user= 없이 들어온 요청(기존 gallery.html, gallery.html?pin=..., ?q=... 링크들)이
 // 가리킬 기본 아카이브 - 마이그레이션으로 실제 계정을 만든 뒤 그 사용자명으로 설정한다.
 const DEFAULT_ARCHIVE_USERNAME = process.env.DEFAULT_ARCHIVE_USERNAME || '';
 
 // 익명 키로 만든 클라이언트 - 공개 읽기 전용(RLS의 select using(true) 정책을 탄다)
 const supabaseAnon = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-
-// 에러 핸들링
-const handleApiError = (error, res) => {
-    console.error('Pinterest API Error:', error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({
-        error: error.response?.data?.message || 'API 호출 실패',
-        details: error.message
-    });
-};
 
 /**
  * Supabase의 pins 행(snake_case)을 프론트엔드가 기대하는 기존 API 응답 형태(camelCase)로 변환한다.
@@ -478,145 +500,268 @@ app.post('/api/pins/import', async (req, res) => {
     }
 });
 
+// ============================================================
+// Pinterest 실계정 연동 (OAuth) - developers.pinterest.com 심사 승인 후 실제로 동작한다.
+// 승인 전까지는 PINTEREST_CLIENT_ID가 비어 있어서 /auth/pinterest/start가 바로 에러를 준다.
+// ============================================================
+
 /**
- * 특정 보드의 핀 가져오기 (Pinterest 실계정 연동 시 사용 - 아직 미사용)
+ * "Pinterest 연동하기" 버튼이 호출한다. 로그인한 사용자를 확인하고, 이 시도를 식별할
+ * state를 발급한 다음 Pinterest 인증 화면 URL을 돌려준다 - 프론트엔드가 그 URL로
+ * window.location을 옮기면 실제 리다이렉트가 시작된다 (fetch로 먼저 호출하는 이유는
+ * 일반 <a> 링크로는 Authorization 헤더를 실어 보낼 수 없기 때문).
  */
-app.get('/api/board/:boardId/pins', async (req, res) => {
+app.post('/auth/pinterest/start', async (req, res) => {
     try {
-        if (!ACCESS_TOKEN) {
-            return res.status(400).json({ error: 'Access Token이 필요합니다' });
+        if (!isPinterestOAuthConfigured()) {
+            return res.status(400).json({ error: 'Pinterest 연동이 아직 설정되지 않았습니다 (심사 대기 중)' });
         }
 
-        const { boardId } = req.params;
-        const params = {
-            fields: 'id,created_at,creator,description,dominant_color,image,link,title',
-            page_size: 50
-        };
+        const authHeader = req.headers.authorization || '';
+        if (!authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: '로그인이 필요합니다' });
+        }
+        const userJwt = authHeader.slice('Bearer '.length);
 
-        const response = await axios.get(
-            `${PINTEREST_API_BASE}/boards/${boardId}/pins`,
-            {
-                headers: {
-                    'Authorization': `Bearer ${ACCESS_TOKEN}`,
-                    'Content-Type': 'application/json'
-                },
-                params: params
-            }
-        );
+        const supabaseUser = supabaseForRequest(req);
+        const { data: userData, error: userError } = await supabaseUser.auth.getUser();
+        if (userError || !userData.user) {
+            return res.status(401).json({ error: '유효하지 않은 로그인입니다' });
+        }
 
-        const pins = response.data.items.map(pin => ({
-            id: pin.id,
-            title: pin.title || '제목 없음',
-            description: pin.description || '',
-            image: pin.image?.original?.url || '',
-            link: pin.link || '',
-            creator: pin.creator?.username || '',
-            color: pin.dominant_color || '#667eea'
-        }));
-
-        res.json({
-            success: true,
-            count: pins.length,
-            pins: pins
+        cleanupExpiredPinterestStates();
+        const state = crypto.randomBytes(24).toString('hex');
+        pendingPinterestStates.set(state, {
+            userId: userData.user.id,
+            userJwt,
+            expiresAt: Date.now() + PINTEREST_STATE_TTL_MS
         });
 
+        const redirectUri = `${req.protocol}://${req.get('host')}/auth/pinterest/callback`;
+        const authorizeUrl = new URL('https://www.pinterest.com/oauth/');
+        authorizeUrl.searchParams.set('client_id', PINTEREST_CLIENT_ID);
+        authorizeUrl.searchParams.set('redirect_uri', redirectUri);
+        authorizeUrl.searchParams.set('response_type', 'code');
+        authorizeUrl.searchParams.set('scope', PINTEREST_OAUTH_SCOPES);
+        authorizeUrl.searchParams.set('state', state);
+
+        res.json({ success: true, url: authorizeUrl.toString() });
     } catch (error) {
-        handleApiError(error, res);
+        console.error('Pinterest 연동 시작 실패:', error.message);
+        res.status(500).json({ error: 'Pinterest 연동을 시작하지 못했습니다' });
     }
 });
 
 /**
- * 사용자의 모든 보드 가져오기 (Pinterest 실계정 연동 시 사용 - 아직 미사용)
+ * Pinterest가 사용자를 승인/거절 후 돌려보내는 콜백. 브라우저가 직접 여기로 오는 일반
+ * GET 요청이라 Authorization 헤더를 실을 수 없으므로, /auth/pinterest/start에서 미리
+ * 저장해둔 state -> (userId, userJwt) 매핑으로 "누가 이 연동을 시작했는지"를 복원한다.
  */
-app.get('/api/boards', async (req, res) => {
+app.get('/auth/pinterest/callback', async (req, res) => {
+    const { code, state, error: oauthError } = req.query;
+
+    if (oauthError || !code || !state) {
+        return res.redirect('/index.html?pinterest=error');
+    }
+
+    cleanupExpiredPinterestStates();
+    const pending = pendingPinterestStates.get(state);
+    if (!pending) {
+        return res.redirect('/index.html?pinterest=error');
+    }
+    pendingPinterestStates.delete(state);
+
     try {
-        if (!ACCESS_TOKEN) {
-            return res.status(400).json({ error: 'Access Token이 필요합니다' });
-        }
+        const redirectUri = `${req.protocol}://${req.get('host')}/auth/pinterest/callback`;
+        const basicAuth = Buffer.from(`${PINTEREST_CLIENT_ID}:${PINTEREST_CLIENT_SECRET}`).toString('base64');
 
-        const params = {
-            fields: 'id,name,description,pin_count',
-            page_size: 20
-        };
-
-        const response = await axios.get(
-            `${PINTEREST_API_BASE}/user/boards`,
-            {
-                headers: {
-                    'Authorization': `Bearer ${ACCESS_TOKEN}`,
-                    'Content-Type': 'application/json'
-                },
-                params: params
-            }
+        const tokenResponse = await axios.post(
+            'https://api.pinterest.com/v5/oauth/token',
+            new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri }).toString(),
+            { headers: { Authorization: `Basic ${basicAuth}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
         );
 
-        const boards = response.data.items.map(board => ({
-            id: board.id,
-            name: board.name,
-            description: board.description || '',
-            pinCount: board.pin_count || 0
-        }));
+        const { access_token, refresh_token, expires_in, scope } = tokenResponse.data;
 
-        res.json({
-            success: true,
-            count: boards.length,
-            boards: boards
+        // 발급받은 토큰은 이 사용자의 JWT로만 쓴다 - RLS가 auth.uid() = user_id인 행만
+        // 허용하므로, 서버가 별도의 관리자(service_role) 키 없이도 안전하게 저장할 수 있다.
+        const supabaseUser = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+            global: { headers: { Authorization: `Bearer ${pending.userJwt}` } }
         });
 
+        const { error: upsertError } = await supabaseUser.from('pinterest_connections').upsert({
+            user_id: pending.userId,
+            access_token,
+            refresh_token: refresh_token || null,
+            expires_at: new Date(Date.now() + (expires_in || 0) * 1000).toISOString(),
+            scope: scope || PINTEREST_OAUTH_SCOPES,
+            connected_at: new Date().toISOString()
+        });
+
+        if (upsertError) throw upsertError;
+
+        res.redirect('/index.html?pinterest=connected');
     } catch (error) {
-        handleApiError(error, res);
+        console.error('Pinterest 토큰 교환 실패:', error.response?.data || error.message);
+        res.redirect('/index.html?pinterest=error');
     }
 });
 
 /**
- * 핀 검색 (Pinterest 실계정 연동 시 사용 - 아직 미사용, /api/pins/search와는 별개)
+ * 지금 로그인한 사용자가 Pinterest를 연동해뒀는지 확인한다 (토큰 값 자체는 절대 응답에 담지 않는다).
  */
-app.get('/api/search', async (req, res) => {
+app.get('/api/pinterest/status', async (req, res) => {
     try {
-        if (!ACCESS_TOKEN) {
-            return res.status(400).json({ error: 'Access Token이 필요합니다' });
+        const authHeader = req.headers.authorization || '';
+        if (!authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: '로그인이 필요합니다' });
         }
 
-        const { query } = req.query;
-        if (!query) {
-            return res.status(400).json({ error: '검색어가 필요합니다' });
+        const supabaseUser = supabaseForRequest(req);
+        const { data: userData, error: userError } = await supabaseUser.auth.getUser();
+        if (userError || !userData.user) {
+            return res.status(401).json({ error: '유효하지 않은 로그인입니다' });
         }
 
-        const params = {
-            query: query,
-            fields: 'id,created_at,creator,description,dominant_color,image,link,title',
-            page_size: 30
-        };
+        const { data, error } = await supabaseUser
+            .from('pinterest_connections')
+            .select('connected_at, scope')
+            .eq('user_id', userData.user.id)
+            .maybeSingle();
 
-        const response = await axios.get(
-            `${PINTEREST_API_BASE}/search/pins`,
-            {
-                headers: {
-                    'Authorization': `Bearer ${ACCESS_TOKEN}`,
-                    'Content-Type': 'application/json'
-                },
-                params: params
-            }
-        );
+        if (error) throw error;
 
-        const pins = response.data.items.map(pin => ({
-            id: pin.id,
-            title: pin.title || '제목 없음',
-            description: pin.description || '',
-            image: pin.image?.original?.url || '',
-            link: pin.link || '',
-            creator: pin.creator?.username || '',
-            color: pin.dominant_color || '#667eea'
-        }));
-
-        res.json({
-            success: true,
-            count: pins.length,
-            pins: pins
-        });
-
+        res.json({ success: true, connected: !!data, connectedAt: data?.connected_at || null });
     } catch (error) {
-        handleApiError(error, res);
+        console.error('Pinterest 연동 상태 확인 실패:', error.message);
+        res.status(500).json({ error: '연동 상태를 확인하지 못했습니다' });
+    }
+});
+
+/**
+ * 만료가 임박한 access_token을 refresh_token으로 갱신한다. 갱신이 필요 없으면 그대로 돌려준다.
+ */
+async function refreshPinterestTokenIfNeeded(connection) {
+    const isExpiringSoon = connection.expires_at && new Date(connection.expires_at).getTime() < Date.now() + 60000;
+    if (!isExpiringSoon || !connection.refresh_token) return connection;
+
+    const basicAuth = Buffer.from(`${PINTEREST_CLIENT_ID}:${PINTEREST_CLIENT_SECRET}`).toString('base64');
+    const { data } = await axios.post(
+        'https://api.pinterest.com/v5/oauth/token',
+        new URLSearchParams({ grant_type: 'refresh_token', refresh_token: connection.refresh_token }).toString(),
+        { headers: { Authorization: `Basic ${basicAuth}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+
+    return {
+        ...connection,
+        access_token: data.access_token,
+        expires_at: new Date(Date.now() + (data.expires_in || 0) * 1000).toISOString()
+    };
+}
+
+/**
+ * 연동된 Pinterest 계정의 보드/핀을 실제로 가져와서 이 사용자의 아카이브에 추가한다.
+ * 이미 가져온 적 있는 핀(source_pin_id 기준)은 건너뛰어서 다시 눌러도 중복 삽입되지 않는다.
+ * 색상/카테고리 자동 분류는 로컬 파이썬 스크립트로 했던 별도 작업이라, 여기로 새로 들어오는
+ * 핀은 우선 분류 없이 저장되고(검색 자체는 제목/설명/키워드 기준으로 계속 동작한다) 이후
+ * 별도 기능으로 보완할 수 있다.
+ */
+app.post('/api/pinterest/sync', async (req, res) => {
+    try {
+        const authHeader = req.headers.authorization || '';
+        if (!authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ error: '로그인이 필요합니다' });
+        }
+
+        const supabaseUser = supabaseForRequest(req);
+        const { data: userData, error: userError } = await supabaseUser.auth.getUser();
+        if (userError || !userData.user) {
+            return res.status(401).json({ error: '유효하지 않은 로그인입니다' });
+        }
+
+        const { data: connection, error: connError } = await supabaseUser
+            .from('pinterest_connections')
+            .select('*')
+            .eq('user_id', userData.user.id)
+            .maybeSingle();
+
+        if (connError) throw connError;
+        if (!connection) return res.status(400).json({ error: 'Pinterest 계정이 연동되어 있지 않습니다' });
+
+        const refreshed = await refreshPinterestTokenIfNeeded(connection);
+        if (refreshed.access_token !== connection.access_token) {
+            await supabaseUser
+                .from('pinterest_connections')
+                .update({ access_token: refreshed.access_token, expires_at: refreshed.expires_at })
+                .eq('user_id', userData.user.id);
+        }
+
+        const pinterestHeaders = { Authorization: `Bearer ${refreshed.access_token}` };
+
+        // 1. 보드 전부 가져오기 (커서 기반 페이지네이션)
+        const boards = [];
+        let boardsBookmark = null;
+        do {
+            const { data } = await axios.get(`${PINTEREST_API_BASE}/boards`, {
+                headers: pinterestHeaders,
+                params: { page_size: 100, ...(boardsBookmark ? { bookmark: boardsBookmark } : {}) }
+            });
+            boards.push(...(data.items || []));
+            boardsBookmark = data.bookmark || null;
+        } while (boardsBookmark);
+
+        // 2. 보드별로 핀 전부 가져오기
+        const fetchedPins = [];
+        for (const board of boards) {
+            let pinsBookmark = null;
+            do {
+                const { data } = await axios.get(`${PINTEREST_API_BASE}/boards/${board.id}/pins`, {
+                    headers: pinterestHeaders,
+                    params: { page_size: 100, ...(pinsBookmark ? { bookmark: pinsBookmark } : {}) }
+                });
+                (data.items || []).forEach((pin) => {
+                    const images = pin.media?.images || {};
+                    const image = images['1200x']?.url || images['600x']?.url || images.original?.url
+                        || Object.values(images)[0]?.url || '';
+                    fetchedPins.push({
+                        source_pin_id: String(pin.id),
+                        title: pin.title || '제목 없음',
+                        description: pin.description || '',
+                        image,
+                        link: pin.link || '',
+                        creator: board.name || '',
+                        color: pin.dominant_color || '#667eea'
+                    });
+                });
+                pinsBookmark = data.bookmark || null;
+            } while (pinsBookmark);
+        }
+
+        // 3. 이미 가져온 핀은 건너뛴다
+        const { data: existingRows } = await supabaseUser
+            .from('pins')
+            .select('source_pin_id')
+            .eq('owner_id', userData.user.id)
+            .not('source_pin_id', 'is', null);
+        const existingIds = new Set((existingRows || []).map((r) => r.source_pin_id));
+
+        const newRows = fetchedPins
+            .filter((p) => p.image && !existingIds.has(p.source_pin_id))
+            .map((p) => ({ ...p, owner_id: userData.user.id, memo: '', custom_tags: [] }));
+
+        const BATCH_SIZE = 500;
+        let inserted = 0;
+        for (let i = 0; i < newRows.length; i += BATCH_SIZE) {
+            const batch = newRows.slice(i, i + BATCH_SIZE);
+            const { error } = await supabaseUser.from('pins').insert(batch);
+            if (error) throw error;
+            inserted += batch.length;
+        }
+
+        res.json({ success: true, fetched: fetchedPins.length, inserted, skipped: fetchedPins.length - newRows.length });
+    } catch (error) {
+        console.error('Pinterest 동기화 실패:', error.response?.data || error.message);
+        res.status(500).json({ error: 'Pinterest 동기화에 실패했습니다' });
     }
 });
 
@@ -671,6 +816,7 @@ app.get('/api/status', (req, res) => {
         status: 'ok',
         server: 'running',
         hasAccessToken: hasToken,
+        hasPinterestOAuth: isPinterestOAuthConfigured(),
         hasSupabase: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY),
         apiVersion: 'Pinterest v5'
     });

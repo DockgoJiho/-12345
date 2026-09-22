@@ -44,6 +44,10 @@ const usernameSetupForm = document.getElementById('username-setup-form');
 const usernameSetupInput = document.getElementById('username-setup-input');
 const usernameSetupError = document.getElementById('username-setup-error');
 
+const pinterestConnectBtn = document.getElementById('pinterest-connect-btn');
+const pinterestToast = document.getElementById('pinterest-toast');
+let pinterestConnected = false;
+
 // ── 모달 열기/닫기, 탭 전환 ──────────────────────────────────
 function openAuthModal(tab = 'login') {
     authModal.classList.remove('hidden');
@@ -176,6 +180,7 @@ async function refreshAuthUI(session) {
 
         followingSection.classList.remove('hidden');
         loadFollowingList();
+        refreshPinterestButton(session.access_token);
 
         // 구글/카카오로 처음 가입해서 임시 사용자명이 붙어 있으면, 실제로 쓸
         // 사용자명을 한 번 정하고 넘어가게 한다 (입력창엔 그 임시 사용자명을
@@ -197,6 +202,93 @@ async function refreshAuthUI(session) {
         usernameSetupModal.classList.add('hidden');
     }
 }
+
+// ── Pinterest 실계정 연동 ──────────────────────────────────────
+function showPinterestToast(message, isError = false) {
+    pinterestToast.textContent = message;
+    pinterestToast.classList.toggle('error', isError);
+    pinterestToast.classList.remove('hidden');
+    clearTimeout(showPinterestToast._timer);
+    showPinterestToast._timer = setTimeout(() => {
+        pinterestToast.classList.add('hidden');
+    }, 4000);
+}
+
+async function refreshPinterestButton(accessToken) {
+    try {
+        const res = await fetch('/api/pinterest/status', {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        const data = await res.json();
+        pinterestConnected = !!data.connected;
+    } catch (err) {
+        pinterestConnected = false;
+    }
+    pinterestConnectBtn.textContent = pinterestConnected ? 'Sync Pinterest' : 'Connect Pinterest';
+}
+
+pinterestConnectBtn.addEventListener('click', async () => {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (!session) return;
+    const accessToken = session.access_token;
+
+    if (!pinterestConnected) {
+        pinterestConnectBtn.disabled = true;
+        try {
+            const res = await fetch('/auth/pinterest/start', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                showPinterestToast(data.error || 'Pinterest 연동을 시작하지 못했습니다', true);
+                return;
+            }
+            // 전체 페이지 이동 - Pinterest 인증 화면으로 나갔다가 콜백으로 돌아온다
+            window.location.href = data.url;
+        } finally {
+            pinterestConnectBtn.disabled = false;
+        }
+        return;
+    }
+
+    pinterestConnectBtn.disabled = true;
+    pinterestConnectBtn.textContent = '동기화 중...';
+    try {
+        const res = await fetch('/api/pinterest/sync', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            showPinterestToast(data.error || '동기화에 실패했습니다', true);
+        } else {
+            showPinterestToast(`${data.inserted}개의 새 핀을 가져왔습니다 (총 ${data.fetched}개 확인)`);
+        }
+    } catch (err) {
+        showPinterestToast('동기화에 실패했습니다', true);
+    } finally {
+        pinterestConnectBtn.disabled = false;
+        pinterestConnectBtn.textContent = pinterestConnected ? 'Sync Pinterest' : 'Connect Pinterest';
+    }
+});
+
+// Pinterest 인증 화면에 다녀온 직후(서버가 ?pinterest=connected|error로 돌려보낸다)
+(function handlePinterestRedirectResult() {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get('pinterest');
+    if (!result) return;
+
+    if (result === 'connected') {
+        showPinterestToast('Pinterest 계정이 연동되었습니다. 다시 눌러서 동기화해보세요.');
+    } else if (result === 'error') {
+        showPinterestToast('Pinterest 연동에 실패했습니다. 다시 시도해주세요.', true);
+    }
+
+    params.delete('pinterest');
+    const cleanedUrl = window.location.pathname + (params.toString() ? `?${params.toString()}` : '');
+    window.history.replaceState({}, '', cleanedUrl);
+})();
 
 // ── 소셜 로그인 첫 가입자의 사용자명 정하기 ──────────────────────
 usernameSetupForm.addEventListener('submit', async (e) => {

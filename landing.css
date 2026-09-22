@@ -564,6 +564,30 @@ html, body {
     min-height: 12px;
 }
 
+/* Pinterest 연동/동기화 결과 토스트 */
+.pinterest-toast {
+    position: fixed;
+    top: 90px;
+    right: 1.5vw;
+    z-index: 60;
+    background: #111;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 10px 16px;
+    border-radius: 20px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    max-width: 280px;
+}
+
+.pinterest-toast.hidden {
+    display: none;
+}
+
+.pinterest-toast.error {
+    background: #ff4433;
+}
+
 @media (max-width: 768px) {
     .landing-lower {
         flex-direction: column;
