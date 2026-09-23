@@ -327,6 +327,9 @@ class ParticleGallery {
             if (data.success) {
                 console.log(`✓ ${(data.pins || []).length}개의 핀을 로드했습니다`);
                 this.pinsData = data.pins || [];
+                // 검색을 취소했을 때 되돌아갈 기본 샘플. this.pinsData는 검색 중엔
+                // 매칭된 핀들로 임시 교체되므로 원본은 따로 보관해둔다.
+                this.baselinePinsData = this.pinsData;
                 this.viewingUsername = data.owner ? data.owner.username : null;
                 this.viewingUserId = data.owner ? data.owner.id : null;
 
@@ -347,6 +350,7 @@ class ParticleGallery {
             // 실패 시 샘플 데이터 사용
             console.log('샘플 데이터로 갤러리를 초기화합니다');
             this.pinsData = PINS_DATA;
+            this.baselinePinsData = this.pinsData;
             this.hideLoading();
             this.createParticles();
             this.animate();
@@ -377,12 +381,21 @@ class ParticleGallery {
         this.container.appendChild(errorEl);
     }
 
-    showEmptyTunnelMessage() {
+    showEmptyTunnelMessage(text = '아직 저장된 핀이 없습니다.') {
+        // 검색으로 터널을 여러 번 다시 채우다 보면 같은 메시지가 중복 생성될 수 있어 먼저 정리한다
+        const existing = document.getElementById('empty-tunnel-indicator');
+        if (existing) existing.remove();
+
         const emptyEl = document.createElement('div');
         emptyEl.className = 'loading';
-        emptyEl.textContent = '아직 저장된 핀이 없습니다.';
+        emptyEl.textContent = text;
         emptyEl.id = 'empty-tunnel-indicator';
         this.container.appendChild(emptyEl);
+    }
+
+    hideEmptyTunnelMessage() {
+        const existing = document.getElementById('empty-tunnel-indicator');
+        if (existing) existing.remove();
     }
 
     createParticles() {
@@ -390,9 +403,13 @@ class ParticleGallery {
         // 기본 아카이브가 설정 안 된 경우 pinsData가 비어 있을 수 있다 - 카드를 0개로
         // 나눠 배치하려 하면(index % 0) 바로 아래에서 에러가 나므로 여기서 막는다.
         if (!this.pinsData || this.pinsData.length === 0) {
-            this.showEmptyTunnelMessage();
+            const message = this.searchTags && this.searchTags.length > 0
+                ? '일치하는 핀이 없습니다.'
+                : '아직 저장된 핀이 없습니다.';
+            this.showEmptyTunnelMessage(message);
             return;
         }
+        this.hideEmptyTunnelMessage();
 
         // 원통형 아카이브 터널: 여러 겹의 고리(ring)를 따라 카드를 촘촘히 배치한다.
         // 카메라가 터널 안쪽 축을 따라 이동하며, 사방이 화면으로 둘러싸인 느낌을 준다.
@@ -960,6 +977,7 @@ class ParticleGallery {
     async runSearch() {
         if (this.searchTags.length === 0) {
             this.searchResultsEl.innerHTML = '';
+            this.filterTunnelByPins(null);
             return;
         }
 
@@ -975,9 +993,43 @@ class ParticleGallery {
             if (requestId !== this.searchRequestId) return;
 
             this.renderSearchResults(data.pins || []);
+            this.filterTunnelByPins(data.pins || []);
         } catch (err) {
             if (requestId !== this.searchRequestId) return;
             this.searchResultsEl.innerHTML = '<div class="search-status">검색에 실패했습니다</div>';
+            this.filterTunnelByPins(null);
+        }
+    }
+
+    /**
+     * 검색 결과에 맞춰 터널을 다시 채운다. matchedPins가 null이면(검색어 없음)
+     * 처음 로드했던 기본 샘플로 되돌아간다.
+     *
+     * 단순히 기존 카드를 숨기는 방식은 쓸 수 없다: 터널은 전체 아카이브가 아니라
+     * 서버가 무작위로 골라준 표본(pinsData, 최대 200장)만 들고 있는데, 검색은 전체
+     * 아카이브를 대상으로 하기 때문에 매칭된 핀이 하필 지금 표본에 없으면 숨길
+     * 카드 자체가 없어 터널이 실제보다 훨씬 휑해 보인다. 그래서 매칭된 핀 데이터로
+     * 카드 자체를 새로 만들어 채운다(적은 수라도 터널 칸 수만큼 반복 배치되어
+     * 밀도는 유지된다).
+     */
+    filterTunnelByPins(matchedPins) {
+        this.rebuildTunnel(matchedPins || this.baselinePinsData);
+    }
+
+    /**
+     * 지금 떠 있는 카드를 전부 정리(GPU 리소스 해제 포함)하고 주어진 핀 목록으로
+     * 다시 채운다.
+     */
+    rebuildTunnel(pinsArray) {
+        while (this.particles.length > 0) {
+            this.removeParticleFromScene(this.particles[this.particles.length - 1]);
+        }
+
+        this.pinsData = pinsArray;
+        this.createParticles();
+
+        if (this.particles.length > 0) {
+            this.playEntranceAnimation();
         }
     }
 
