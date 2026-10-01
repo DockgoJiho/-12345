@@ -42,9 +42,11 @@ const PUBLIC_STATIC_BLOCKLIST = new Set([
     'local_pins.json',
     'categories.js'
 ]);
+// 폴더째 막는 경로: 감각 검색 엔진과 그 데이터(내 핀 임베딩, 라벨), 실험 스크립트
+const PUBLIC_STATIC_BLOCKED_DIRS = ['taste/', 'experiments/'];
 app.use((req, res, next) => {
     const requestedFile = req.path.replace(/^\//, '');
-    if (PUBLIC_STATIC_BLOCKLIST.has(requestedFile)) {
+    if (PUBLIC_STATIC_BLOCKLIST.has(requestedFile) || PUBLIC_STATIC_BLOCKED_DIRS.some((dir) => requestedFile.startsWith(dir))) {
         return res.status(404).end();
     }
     next();
@@ -810,6 +812,46 @@ app.get('/api/image', async (req, res) => {
 /**
  * 헬스 체크 및 API 상태 확인
  */
+// ── 감각 검색 (주관 키워드 + 주제 필터 + 단어 감각 테스트) ─────────────────
+// 엔진은 미리 계산한 임베딩(약 13MB)을 메모리에 올리므로, 처음 쓰일 때 불러온다
+let tasteEngine = null;
+const taste = () => (tasteEngine ??= require('./taste/engine'));
+
+/**
+ * 감각 검색. body: { q, exclude: [주제 id], marks? }
+ * marks(단어 감각 테스트 결과)가 있으면 그 사람의 기준으로, 없으면 아카이브 주인의 기준으로 채점한다.
+ */
+app.post('/api/taste/search', (req, res) => {
+    try {
+        const { q, exclude, marks } = req.body ?? {};
+        const result = taste().search(q, {
+            excludeToggles: Array.isArray(exclude) ? exclude : [],
+            marks: marks ? taste().sanitizeMarks(marks) : null
+        });
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error('감각 검색 실패:', error.message);
+        res.status(500).json({ error: '검색에 실패했습니다' });
+    }
+});
+
+app.get('/api/taste/keywords', (req, res) => {
+    res.json({ success: true, keywords: taste().keywordList() });
+});
+
+app.get('/api/taste/subjects', (req, res) => {
+    res.json({ success: true, subjects: taste().subjectCounts() });
+});
+
+app.get('/api/taste/test', (req, res) => {
+    res.json({ success: true, keywords: taste().testQuestions() });
+});
+
+// 테스트 답 → 기준(marks)과 감각 프로필. 서버에 저장하지 않고 브라우저가 들고 있다가 검색할 때 보낸다
+app.post('/api/taste/test/score', (req, res) => {
+    res.json({ success: true, ...taste().scoreTest(req.body?.answers) });
+});
+
 app.get('/api/status', (req, res) => {
     const hasToken = !!ACCESS_TOKEN && ACCESS_TOKEN !== 'your_access_token_here';
     res.json({
@@ -840,6 +882,8 @@ app.listen(PORT, () => {
     console.log(`   GET  /api/pins/search?q=...&user=... - 핀 검색`);
     console.log(`   GET  /api/pins/:id/related  - 관련 핀`);
     console.log(`   POST /api/pins/import       - 로그인한 사용자의 핀 일괄 등록`);
+    console.log(`   POST /api/taste/search      - 감각 검색 (주관 키워드 + 주제)`);
+    console.log(`   GET  /api/taste/test        - 단어 감각 테스트 문제`);
     console.log(`   GET  /api/status            - 서버 상태`);
     console.log(`\n${process.env.SUPABASE_URL ? '✓  Supabase 연동됨' : '⚠️  .env 파일에 SUPABASE_URL/SUPABASE_ANON_KEY를 설정하세요'}`);
     console.log(`${'='.repeat(60)}\n`);

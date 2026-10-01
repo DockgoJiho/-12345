@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taste Search</title>
+<link rel="stylesheet" href="taste.css">
+</head>
+<body>
+<header class="taste-header">
+    <a class="brand" href="index.html">PINTEREST ARCHIVE</a>
+    <nav>
+        <a href="gallery.html">TUNNEL</a>
+        <a class="current" href="taste.html">TASTE SEARCH</a>
+        <a href="taste-test.html">단어 감각 테스트</a>
+    </nav>
+</header>
+
+<main class="taste-main">
+    <div class="eyebrow">Taste search</div>
+    <h1 class="taste-title">이름 붙일 수 없는 것을, 느낌으로 찾기</h1>
+    <p class="lead">장르 이름 대신 "차가운", "빽빽한", "물성 있는" 같은 주관적인 말로 핀을 찾아요. 같은 말이라도 사람마다 떠올리는 이미지가 달라서, 누구의 감각을 기준으로 할지 고를 수 있어요.</p>
+
+    <div class="search-box">
+        <input id="q" placeholder="예: 차가운 글리치 / 사람 없는 편한 느낌" autocomplete="off" enterkeyhint="search">
+    </div>
+    <div class="examples" id="examples"><span>예시</span></div>
+    <div class="chips" id="chips"></div>
+
+    <div class="controls">
+        <div>
+            <div class="control-label">누구의 감각으로</div>
+            <div class="segmented" id="criteria">
+                <button data-mode="owner" class="on">아카이브 주인</button>
+                <button data-mode="mine">내 감각</button>
+                <button data-mode="compare">나란히 비교</button>
+            </div>
+        </div>
+        <div>
+            <div class="control-label">빼고 보기</div>
+            <div class="toggles" id="toggles"></div>
+        </div>
+    </div>
+    <p class="notice" id="notice"></p>
+
+    <section class="results" id="results"></section>
+
+    <details class="vocab">
+        <summary>검색에 쓸 수 있는 말 보기</summary>
+        <div id="vocab"></div>
+    </details>
+</main>
+
+<div class="viewer" id="viewer"><img alt=""><a target="_blank" rel="noopener">핀터레스트에서 보기 ↗</a></div>
+
+<script>
+    const $ = (id) => document.getElementById(id);
+    const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const EXAMPLES = ['차가운 글리치', '사람 없는 편한 느낌', '반짝이는 3D 렌더', '빽빽하고 레트로한', '물성 있는 흑백', '옷'];
+
+    // 단어 감각 테스트 결과(내 감각)는 이 브라우저에만 저장된다. 저장소를 못 쓰는 환경이면 테스트를 다시 해야 한다
+    function readProfile() {
+        try { return JSON.parse(localStorage.getItem('tasteProfile') || 'null'); } catch (e) { return null; }
+    }
+    const profile = readProfile();
+    let excluded = new Set();
+    try { excluded = new Set(JSON.parse(localStorage.getItem('tasteExcluded') || '[]')); } catch (e) {}
+    let mode = new URLSearchParams(location.search).get('mode') || 'owner';
+    if (!profile && mode !== 'owner') mode = 'owner';
+
+    let searchTimer, searchSeq = 0;
+
+    async function fetchResults(q, marks) {
+        const res = await fetch('/api/taste/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ q, exclude: [...excluded], marks })
+        });
+        if (!res.ok) throw new Error('search failed');
+        return res.json();
+    }
+
+    function gridHtml(pins) {
+        if (!pins.length) return '<p class="empty">조건에 맞는 핀이 없어요.</p>';
+        return `<div class="grid">${pins.map((p, i) => `<div class="card" data-id="${esc(p.id)}"><img src="/images/${esc(p.id)}.jpg" loading="lazy" alt=""><span class="rank">${i + 1}</span></div>`).join('')}</div>`;
+    }
+
+    async function runSearch() {
+        const q = $('q').value.trim();
+        const seq = ++searchSeq; // 늦게 도착한 이전 검색이 최신 결과를 덮어쓰지 않게
+        if (!q) {
+            $('chips').innerHTML = '';
+            $('results').innerHTML = '';
+            $('results').className = 'results';
+            return;
+        }
+        try {
+            const wantOwner = mode !== 'mine';
+            const wantMine = mode !== 'owner' && profile;
+            const [owner, mine] = await Promise.all([
+                wantOwner ? fetchResults(q, null) : null,
+                wantMine ? fetchResults(q, profile.marks) : null
+            ]);
+            if (seq !== searchSeq) return;
+            const data = owner || mine;
+
+            $('chips').innerHTML = [
+                ...data.include.map((k) => `<span class="chip subject">${esc(k)}</span>`),
+                ...data.keywords.map((k) => `<span class="chip">${esc(k)}</span>`),
+                ...data.exclude.map((k) => `<span class="chip excluded">${esc(k)}</span>`),
+                ...data.unknown.map((k) => `<span class="chip unknown" title="아직 사전에 없는 말이에요">${esc(k)} ?</span>`)
+            ].join('');
+
+            const results = $('results');
+            if (!data.keywords.length && !data.include.length) {
+                results.className = 'results';
+                results.innerHTML = '<p class="empty">아는 말이 없어요. 아래 "검색에 쓸 수 있는 말 보기"에서 골라 써보세요.</p>';
+                return;
+            }
+            if (mode === 'compare' && owner && mine) {
+                results.className = 'results compare';
+                results.innerHTML = `<div><div class="column-title"><b>아카이브 주인</b>의 감각</div>${gridHtml(owner.pins.slice(0, 30))}</div>`
+                    + `<div><div class="column-title"><b>내</b> 감각</div>${gridHtml(mine.pins.slice(0, 30))}</div>`;
+            } else {
+                results.className = 'results';
+                results.innerHTML = gridHtml(data.pins);
+            }
+        } catch (e) {
+            if (seq === searchSeq) $('results').innerHTML = '<p class="empty">검색에 실패했어요. 잠시 후 다시 시도해 주세요.</p>';
+        }
+    }
+
+    function renderCriteria() {
+        document.querySelectorAll('#criteria button').forEach((b) => {
+            b.classList.toggle('on', b.dataset.mode === mode);
+            b.disabled = b.dataset.mode !== 'owner' && !profile;
+        });
+        $('notice').innerHTML = profile
+            ? (mode === 'owner' ? '지금은 이 아카이브를 모은 사람의 감각으로 검색하고 있어요.'
+                : mode === 'mine' ? '지금은 당신이 단어 감각 테스트에서 고른 기준으로 검색하고 있어요. <a href="taste-test.html">테스트 다시 하기</a>'
+                    : '같은 말을 두 사람의 감각으로 검색한 결과예요. 다른 사진이 나온다면, 그게 곧 감각의 차이예요.')
+            : '지금은 이 아카이브를 모은 사람의 감각으로 검색하고 있어요. <a href="taste-test.html">2분짜리 단어 감각 테스트</a>를 하면 당신의 감각으로도 검색하고, 나란히 비교할 수 있어요.';
+    }
+
+    document.querySelectorAll('#criteria button').forEach((b) => {
+        b.onclick = () => { mode = b.dataset.mode; renderCriteria(); runSearch(); };
+    });
+
+    $('q').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 350); });
+    $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { clearTimeout(searchTimer); runSearch(); } });
+
+    EXAMPLES.forEach((text) => {
+        const b = document.createElement('button');
+        b.className = 'pill';
+        b.textContent = text;
+        b.onclick = () => { $('q').value = text; runSearch(); };
+        $('examples').appendChild(b);
+    });
+
+    fetch('/api/taste/subjects').then((r) => r.json()).then(({ subjects }) => {
+        subjects.filter((s) => s.count >= 5).forEach((s) => {
+            const b = document.createElement('button');
+            b.textContent = `${s.ko} ${s.count}`;
+            b.title = `${s.ko} 사진 ${s.count}장을 결과에서 빼요`;
+            b.classList.toggle('on', excluded.has(s.id));
+            b.onclick = () => {
+                excluded.has(s.id) ? excluded.delete(s.id) : excluded.add(s.id);
+                b.classList.toggle('on', excluded.has(s.id));
+                try { localStorage.setItem('tasteExcluded', JSON.stringify([...excluded])); } catch (e) {}
+                runSearch();
+            };
+            $('toggles').appendChild(b);
+        });
+    });
+
+    fetch('/api/taste/keywords').then((r) => r.json()).then(({ keywords }) => {
+        const groups = { mine: '아카이브 주인이 정한 말', extra: '자주 쓰는 느낌의 말', custom: '새로 생긴 말' };
+        $('vocab').innerHTML = Object.entries(groups).map(([g, title]) => {
+            const words = keywords.filter((k) => k.group === g).map((k) => k.ko);
+            return words.length ? `<div class="vocab-group"><b>${title}</b>${words.map(esc).join(' · ')}</div>` : '';
+        }).join('') + '<div class="vocab-group"><b>주제어 (뒤에 "없는", "빼고"를 붙이면 제외)</b>사람 · 옷 · 포스터 · 3D 렌더 · 건축 · 음식 · 스크린샷</div>';
+    });
+
+    $('results').addEventListener('click', (e) => {
+        const card = e.target.closest('.card');
+        if (!card) return;
+        const v = $('viewer');
+        v.querySelector('img').src = `/images/${card.dataset.id}.jpg`;
+        v.querySelector('a').href = `https://www.pinterest.com/pin/${card.dataset.id}/`;
+        v.classList.add('open');
+    });
+    $('viewer').addEventListener('click', (e) => { if (e.target.tagName !== 'A') $('viewer').classList.remove('open'); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('viewer').classList.remove('open'); });
+
+    renderCriteria();
+    const initial = new URLSearchParams(location.search).get('q');
+    if (initial) { $('q').value = initial; runSearch(); }
+</script>
+</body>
+</html>

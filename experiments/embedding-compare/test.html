@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>단어 감각 테스트</title>
+<style>
+    :root { --bg: #111; --fg: #eee; --muted: #888; --line: #2a2a2a; --accent: #3ddc84; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font-family: -apple-system, sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
+    main { width: 100%; max-width: 900px; padding: 32px 16px 48px; }
+    h1 { font-size: 30px; margin: 0 0 12px; }
+    p { color: var(--muted); line-height: 1.6; margin: 0 0 8px; }
+    input { background: #1d1d1d; border: 1px solid var(--line); color: var(--fg); font-size: 17px; padding: 12px 14px; border-radius: 8px; width: 100%; max-width: 320px; margin: 16px 0; }
+    button { font: inherit; cursor: pointer; }
+    .primary { background: var(--fg); color: var(--bg); border: 0; border-radius: 8px; padding: 12px 22px; font-weight: 600; font-size: 15px; }
+    .ghost { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 10px 16px; font-size: 14px; }
+    .ghost:hover { color: var(--fg); border-color: var(--fg); }
+    .progress { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; margin-bottom: 20px; }
+    .progress div { height: 100%; background: var(--accent); transition: width .2s; }
+    .count { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+    .question { font-size: 22px; margin: 0 0 20px; }
+    .question b { font-size: 30px; }
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .pair button { padding: 0; border: 3px solid transparent; border-radius: 10px; overflow: hidden; background: #000; transition: border-color .1s, transform .1s; }
+    .pair button:hover { border-color: var(--fg); }
+    .pair button:active { transform: scale(.98); }
+    .pair img { display: block; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; }
+    .row { display: flex; gap: 8px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
+    .keys { text-align: center; color: var(--muted); font-size: 12px; margin-top: 10px; }
+    .result li { list-style: none; padding: 14px 0; border-bottom: 1px solid var(--line); font-size: 17px; }
+    .result ul { padding: 0; margin: 20px 0 28px; }
+    [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+    <section id="intro">
+        <h1>단어 감각 테스트</h1>
+        <p>같은 "차가운"이라도 사람마다 떠올리는 이미지가 달라요.</p>
+        <p>사진 두 장 중 그 단어에 <b>더 가까운 쪽</b>을 고르면, 검색이 당신의 감각에 맞춰져요. 약 2분.</p>
+        <input id="name" placeholder="이름 (결과 저장용)" maxlength="20" autocomplete="off">
+        <div><button class="primary" id="start">시작</button></div>
+    </section>
+
+    <section id="quiz" hidden>
+        <div class="progress"><div id="bar"></div></div>
+        <div class="count" id="count"></div>
+        <h2 class="question">둘 중 더 <b id="word"></b> 쪽은?</h2>
+        <div class="pair">
+            <button id="left"><img alt="왼쪽 사진"></button>
+            <button id="right"><img alt="오른쪽 사진"></button>
+        </div>
+        <div class="row">
+            <button class="ghost" id="back">← 이전</button>
+            <button class="ghost" id="both">둘 다 맞아</button>
+            <button class="ghost" id="neither">둘 다 아니야</button>
+        </div>
+        <div class="keys">키보드: ← 왼쪽 · → 오른쪽 · ↑ 둘 다 맞아 · ↓ 둘 다 아니야</div>
+    </section>
+
+    <section id="result" class="result" hidden>
+        <h1>당신의 단어 감각</h1>
+        <ul id="summary"></ul>
+        <div class="row" style="justify-content:flex-start">
+            <button class="primary" id="search">내 감각으로 검색해보기</button>
+            <button class="ghost" id="again">다시 하기</button>
+        </div>
+    </section>
+</main>
+
+<script>
+    const $ = (id) => document.getElementById(id);
+    let questions = [], answers = [], index = 0, name = '';
+
+    // 같은 키워드 문제가 연달아 나오지 않게 섞고, 좌우 위치도 섞는다 (한쪽만 고르는 버릇이 결과에 섞이지 않게)
+    function shuffle(items, seed) {
+        let state = seed;
+        const rand = () => ((state = (state * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+        const out = [...items];
+        for (let i = out.length - 1; i > 0; i--) {
+            const j = Math.floor(rand() * (i + 1));
+            [out[i], out[j]] = [out[j], out[i]];
+        }
+        return out;
+    }
+
+    async function load() {
+        const set = await (await fetch('/api/test')).json();
+        const all = set.flatMap((k) => k.pairs.map((pins, pair) => ({ keyword: k.id, ko: k.ko, pair, pins })));
+        const seed = Date.now() % 100000;
+        questions = shuffle(all, seed).map((q, i) => ({ ...q, swapped: shuffle([0, 1], seed + i)[0] === 1 }));
+    }
+
+    function show() {
+        const q = questions[index];
+        const [a, b] = q.swapped ? [q.pins[1], q.pins[0]] : q.pins;
+        $('left').querySelector('img').src = `/images/${a}.jpg`;
+        $('right').querySelector('img').src = `/images/${b}.jpg`;
+        $('word').textContent = q.ko;
+        $('count').textContent = `${index + 1} / ${questions.length}`;
+        $('bar').style.width = `${(index / questions.length) * 100}%`;
+        $('back').disabled = index === 0;
+        // 다음 문제 사진 미리 불러오기
+        const next = questions[index + 1];
+        if (next) next.pins.forEach((pin) => { new Image().src = `/images/${pin}.jpg`; });
+    }
+
+    async function answer(choice) {
+        const q = questions[index];
+        // 화면상 왼쪽/오른쪽을 원래 문제의 left/right로 되돌린다
+        const actual = q.swapped && (choice === 'left' || choice === 'right') ? (choice === 'left' ? 'right' : 'left') : choice;
+        answers[index] = { keyword: q.keyword, pair: q.pair, choice: actual };
+        index++;
+        if (index < questions.length) return show();
+        $('bar').style.width = '100%';
+        const res = await fetch('/api/test/result', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, answers })
+        });
+        const data = await res.json();
+        $('summary').innerHTML = '';
+        data.summary.forEach((s) => {
+            const li = document.createElement('li');
+            li.textContent = s.sentence;
+            $('summary').appendChild(li);
+        });
+        $('quiz').hidden = true;
+        $('result').hidden = false;
+    }
+
+    $('start').onclick = async () => {
+        name = $('name').value.trim();
+        if (!name) { $('name').focus(); return; }
+        await load();
+        answers = []; index = 0;
+        $('intro').hidden = true; $('quiz').hidden = false;
+        show();
+    };
+    $('name').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) $('start').click(); });
+    $('left').onclick = () => answer('left');
+    $('right').onclick = () => answer('right');
+    $('both').onclick = () => answer('both');
+    $('neither').onclick = () => answer('neither');
+    $('back').onclick = () => { if (index > 0) { index--; show(); } };
+    $('search').onclick = () => { location.href = `/?profile=${encodeURIComponent(name)}`; };
+    $('again').onclick = () => { $('result').hidden = true; $('intro').hidden = false; };
+    document.addEventListener('keydown', (e) => {
+        if ($('quiz').hidden) return;
+        const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'both', ArrowDown: 'neither' };
+        if (map[e.key]) { e.preventDefault(); answer(map[e.key]); }
+    });
+</script>
+</body>
+</html>

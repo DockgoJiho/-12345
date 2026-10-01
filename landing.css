@@ -254,6 +254,10 @@ html, body {
     right: 1.5vw;
     z-index: 50;
     font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    /* TASTE SEARCH 링크와 로그인 영역을 한 줄에 */
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
 .auth-logged-out.hidden,

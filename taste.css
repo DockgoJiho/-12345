@@ -1,0 +1,158 @@
+/* 감각 검색 / 단어 감각 테스트 공용 스타일. 랜딩과 같은 모노스페이스 + 파란 포인트 */
+:root {
+    --bg: #f4f4f1;
+    --ink: #111;
+    --muted: #6b6b6b;
+    --line: #d9d9d4;
+    --accent: #3a3ef2;
+    --accent-soft: rgba(58, 62, 242, 0.08);
+    --no: #d33a2c;
+    --card: #fff;
+    --mono: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    --sans: 'Helvetica Neue', Helvetica, Arial, 'Apple SD Gothic Neo', sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #111113;
+        --ink: #eee;
+        --muted: #9a9a9a;
+        --line: #2c2c30;
+        --accent: #7c80ff;
+        --accent-soft: rgba(124, 128, 255, 0.12);
+        --no: #ff6b5c;
+        --card: #1a1a1d;
+    }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    min-height: 100vh;
+}
+
+a { color: inherit; }
+
+button { font: inherit; cursor: pointer; color: inherit; }
+
+.taste-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+}
+
+.taste-header nav { display: flex; gap: 18px; flex-wrap: wrap; }
+.taste-header a { text-decoration: none; color: var(--muted); }
+.taste-header a:hover, .taste-header a.current { color: var(--ink); }
+.taste-header .brand { color: var(--accent); font-weight: 700; }
+
+.taste-main { max-width: 1200px; margin: 0 auto; padding: 32px 24px 80px; }
+
+.eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; color: var(--accent); text-transform: uppercase; }
+
+h1.taste-title { font-size: clamp(26px, 4vw, 40px); line-height: 1.15; margin: 8px 0 12px; letter-spacing: -0.01em; }
+
+.lead { color: var(--muted); font-size: 15px; line-height: 1.7; max-width: 640px; }
+
+.search-box {
+    margin-top: 28px;
+    display: flex;
+    gap: 8px;
+}
+
+.search-box input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 18px;
+    padding: 14px 16px;
+    border: 1.5px solid var(--ink);
+    border-radius: 0;
+    background: var(--card);
+    color: var(--ink);
+    outline: none;
+}
+
+.search-box input:focus { border-color: var(--accent); }
+
+.examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; align-items: center; }
+.examples span { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-right: 4px; }
+
+.pill {
+    border: 1px solid var(--line);
+    background: var(--card);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+}
+
+.pill:hover { border-color: var(--ink); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; min-height: 28px; }
+.chip { padding: 4px 11px; border-radius: 999px; font-size: 13px; background: var(--accent-soft); color: var(--accent); border: 1px solid transparent; }
+.chip.subject { background: none; border-color: var(--accent); }
+.chip.excluded { background: none; color: var(--no); border-color: var(--no); text-decoration: line-through; }
+.chip.unknown { background: none; color: var(--muted); border: 1px dashed var(--line); }
+
+.controls { display: flex; flex-wrap: wrap; gap: 20px 32px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.control-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
+
+.segmented { display: inline-flex; border: 1px solid var(--ink); }
+.segmented button { background: none; border: 0; padding: 8px 14px; font-size: 13px; }
+.segmented button + button { border-left: 1px solid var(--ink); }
+.segmented button.on { background: var(--ink); color: var(--bg); }
+.segmented button:disabled { color: var(--muted); cursor: not-allowed; }
+
+.toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+.toggles button { background: none; border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; font-size: 12px; color: var(--muted); }
+.toggles button.on { border-color: var(--no); color: var(--no); text-decoration: line-through; }
+
+.notice { margin-top: 14px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+.notice a { color: var(--accent); }
+
+.results { display: grid; gap: 24px; margin-top: 24px; }
+.results.compare { grid-template-columns: 1fr 1fr; }
+.column-title { font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; margin-bottom: 10px; }
+.column-title b { color: var(--accent); }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.results.compare .grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
+
+.card { position: relative; background: #000; cursor: zoom-in; overflow: hidden; }
+.card img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; transition: opacity 0.15s; }
+.card:hover img { opacity: 0.85; }
+.card .rank { position: absolute; top: 6px; left: 6px; font-family: var(--mono); font-size: 10px; color: #fff; background: rgba(0, 0, 0, 0.55); padding: 2px 5px; }
+
+.empty { color: var(--muted); font-size: 14px; padding: 32px 0; }
+
+details.vocab { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 16px; }
+details.vocab summary { cursor: pointer; font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; color: var(--muted); }
+details.vocab .vocab-group { margin-top: 12px; font-size: 13px; line-height: 1.9; }
+details.vocab .vocab-group b { font-family: var(--mono); font-size: 11px; color: var(--muted); display: block; font-weight: 400; }
+
+.viewer { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.88); display: none; align-items: center; justify-content: center; flex-direction: column; gap: 12px; z-index: 10; cursor: zoom-out; padding: 16px; }
+.viewer.open { display: flex; }
+.viewer img { max-width: 92vw; max-height: 82vh; }
+.viewer a { color: #fff; font-family: var(--mono); font-size: 12px; }
+
+.primary { background: var(--ink); color: var(--bg); border: 0; padding: 12px 22px; font-size: 14px; font-weight: 600; }
+.primary:hover { background: var(--accent); color: #fff; }
+.ghost { background: none; border: 1px solid var(--line); padding: 10px 16px; font-size: 14px; }
+.ghost:hover { border-color: var(--ink); }
+.ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+
+@media (max-width: 700px) {
+    .taste-header { padding: 14px 16px; }
+    .taste-main { padding: 24px 16px 64px; }
+    .results.compare { grid-template-columns: 1fr; }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+}

@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>주관 키워드</title>
+<style>
+    :root { --bg: #111; --panel: #181818; --fg: #eee; --muted: #888; --line: #2a2a2a; --yes: #3ddc84; --maybe: #f5c542; --no: #ff5a5a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font-family: -apple-system, sans-serif; display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+    aside { border-right: 1px solid var(--line); background: var(--panel); padding: 16px 10px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+    .tabs button { flex: 1; background: none; border: 1px solid var(--line); color: var(--muted); padding: 7px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .tabs button.active { color: var(--fg); border-color: var(--fg); }
+    .kw { display: flex; justify-content: space-between; align-items: center; width: 100%; background: none; border: 0; color: var(--muted); padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 14px; text-align: left; }
+    .group { font-size: 11px; color: var(--muted); letter-spacing: .04em; margin: 14px 8px 6px; }
+    .group:first-child { margin-top: 0; }
+    .kw:hover { background: #222; }
+    .test-link { display: block; color: var(--muted); font-size: 12px; margin: -6px 8px 12px; text-decoration: none; }
+    .test-link:hover { color: var(--fg); }
+    .kw.active { background: #262626; color: var(--fg); }
+    .kw small { font-size: 11px; color: var(--muted); }
+    .kw small b { color: var(--yes); font-weight: 600; }
+    section { padding: 0 24px 80px; min-width: 0; }
+    header { position: sticky; top: 0; z-index: 2; background: rgba(17,17,17,.95); padding: 16px 0 12px; border-bottom: 1px solid var(--line); }
+    h1 { margin: 0 0 4px; font-size: 26px; }
+    .sub { color: var(--muted); font-size: 13px; }
+    .sub b.yes { color: var(--yes); } .sub b.maybe { color: var(--maybe); } .sub b.no { color: var(--no); }
+    .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .actions button { background: #222; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 13px; }
+    .actions button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); font-weight: 600; }
+    .help { color: var(--muted); font-size: 12px; margin-top: 10px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; margin-top: 16px; }
+    /* 빠르게 여러 번 클릭하면 브라우저가 더블/트리플 클릭으로 보고 사진을 '선택'해서 파랗게 칠해버리는 걸 막는다 */
+    .grid { user-select: none; -webkit-user-select: none; }
+    .card img { -webkit-user-drag: none; }
+    .card { position: relative; cursor: pointer; border-radius: 6px; overflow: hidden; outline: 3px solid transparent; outline-offset: -3px; background: #000; }
+    .card img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+    .card.yes { outline-color: var(--yes); } .card.maybe { outline-color: var(--maybe); } .card.no { outline-color: var(--no); }
+    .card.no img { opacity: .3; filter: grayscale(1); }
+    .card .tag { position: absolute; top: 6px; left: 6px; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px; color: #111; display: none; }
+    .card.yes .tag { display: block; background: var(--yes); } .card.maybe .tag { display: block; background: var(--maybe); } .card.no .tag { display: block; background: var(--no); }
+    .card .zoom { position: absolute; right: 6px; bottom: 6px; width: 26px; height: 26px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; cursor: zoom-in; font-size: 13px; }
+    .card .scores { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 6px; font-size: 10px; color: #ddd; background: linear-gradient(transparent, rgba(0,0,0,.8)); }
+    .search input { width: 100%; max-width: 640px; background: #1d1d1d; border: 1px solid var(--line); color: var(--fg); font-size: 18px; padding: 12px 14px; border-radius: 8px; }
+    .chips { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; min-height: 26px; }
+    .chip { background: #262626; border: 1px solid #3a3a3a; padding: 3px 10px; border-radius: 999px; font-size: 13px; }
+    .empty { color: var(--muted); margin-top: 40px; }
+    .chip.unknown { color: var(--muted); border-style: dashed; }
+    .chip.ai.mapped { border-color: #4a7; } .chip.ai.new { border-color: var(--maybe); }
+    .chip.ai.ignored, .chip.ai.unavailable, .chip.ai.error { color: var(--muted); }
+    .chip.subject { border-color: #58a; color: #9cf; } .chip.excluded { color: var(--no); border-color: #533; text-decoration: line-through; }
+    .toggles { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+    .toggles button { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; margin-right: 4px; }
+    .toggles button.on { border-color: var(--no); color: var(--no); text-decoration: line-through; }
+    .profile-note { margin-top: 10px; font-size: 13px; color: #9cf; }
+    .profile-note a { color: var(--muted); margin-left: 8px; }
+    .ai-note { color: var(--maybe); font-size: 12px; margin-top: 6px; min-height: 16px; }
+    #viewer { position: fixed; inset: 0; z-index: 5; background: rgba(0,0,0,.9); display: none; align-items: center; justify-content: center; cursor: zoom-out; }
+    #viewer img { max-width: 92vw; max-height: 92vh; }
+    #viewer.open { display: flex; }
+</style>
+</head>
+<body>
+<aside>
+    <div class="tabs">
+        <button data-tab="label" class="active">라벨링</button>
+        <button data-tab="search">검색</button>
+    </div>
+    <a class="test-link" href="/test">단어 감각 테스트 →</a>
+    <div id="kwList"></div>
+</aside>
+
+<section id="labelView">
+    <header>
+        <h1 id="kwTitle"></h1>
+        <div class="sub" id="kwSub"></div>
+        <div class="actions">
+            <button id="restNo">이 화면 나머지 전부 아니야</button>
+            <button id="next" class="primary">학습해서 다음 40장 →</button>
+            <button id="toggleLabeled">라벨 붙인 사진 보기</button>
+        </div>
+        <div class="help">클릭 1번 = <b style="color:var(--yes)">맞아</b> · 2번 = <b style="color:var(--maybe)">애매</b> · 3번 = <b style="color:var(--no)">아니야</b> · 4번 = 지우기 · 🔍 크게 보기 · 사진은 AI가 지금 이 키워드에 가깝다고 생각하는 순서예요</div>
+    </header>
+    <div class="grid" id="labelGrid"></div>
+</section>
+
+<section id="searchView" hidden>
+    <header class="search">
+        <input id="q" placeholder="예: 차가운 글리치 / 사람 없는 레트로한 / 반짝이는 3D 렌더 / 옷" autocomplete="off">
+        <div class="chips" id="chips"></div>
+        <div class="ai-note" id="aiNote"></div>
+        <div class="profile-note" id="profileNote" hidden></div>
+        <div class="toggles"><span>제외</span><span id="excludeToggles"></span></div>
+        <div class="help">키워드를 섞어 쓰면 모두 만족하는 사진만 나와요. 비슷한 말도 알아들어요 (빽빽한 → 밀도 높은, 청량한 → 시원한) · 사전에 없는 말은 Enter로 AI 해석</div>
+    </header>
+    <div class="grid" id="searchGrid"></div>
+</section>
+
+<div id="viewer"><img alt=""></div>
+
+<script>
+    const STATES = [undefined, 2, 1, 0]; // 지우기 → 맞아 → 애매 → 아니야
+    const LOOK = { 2: ['yes', '맞아'], 1: ['maybe', '애매'], 0: ['no', '아니야'] };
+    let keywords = [], currentKw = null, batch = [], showLabeled = false;
+
+    const $ = (id) => document.getElementById(id);
+
+    async function loadKeywords() {
+        keywords = await (await fetch('/api/keywords')).json();
+        currentKw ??= keywords[0].id;
+        renderKwList();
+    }
+
+    function renderKwList() {
+        $('kwList').innerHTML = '';
+        const GROUP_TITLES = { mine: '내 키워드', extra: '추가 키워드', custom: 'AI가 만든 키워드' };
+        keywords.forEach((k, i) => {
+            if (i === 0 || keywords[i - 1].group !== k.group) {
+                const h = document.createElement('div');
+                h.className = 'group';
+                h.textContent = GROUP_TITLES[k.group];
+                $('kwList').appendChild(h);
+            }
+            const b = document.createElement('button');
+            b.className = 'kw' + (k.id === currentKw ? ' active' : '');
+            b.innerHTML = `<span>${k.ko}</span><small><b>${k.yes || ''}</b>${k.yes || k.no ? ' / ' + (k.yes + k.maybe + k.no) : ''}</small>`;
+            b.onclick = () => { currentKw = k.id; showLabeled = false; switchTab('label'); renderKwList(); loadBatch(); };
+            $('kwList').appendChild(b);
+        });
+    }
+
+    function renderSub(c) {
+        const k = keywords.find((x) => x.id === currentKw);
+        Object.assign(k, c);
+        $('kwTitle').textContent = k.ko;
+        $('kwSub').innerHTML = `<b class="yes">맞아 ${c.yes}</b> · <b class="maybe">애매 ${c.maybe}</b> · <b class="no">아니야 ${c.no}</b>`
+            + ` · 비슷한 말: ${k.synonyms.join(', ')}`;
+        $('toggleLabeled').textContent = showLabeled ? '라벨링으로 돌아가기' : '라벨 붙인 사진 보기';
+        $('restNo').hidden = $('next').hidden = showLabeled;
+        renderKwList();
+    }
+
+    async function loadBatch() {
+        const data = await (await fetch(`/api/batch?kw=${currentKw}&n=40${showLabeled ? '&view=labeled' : ''}`)).json();
+        batch = data.pins;
+        window.getSelection()?.removeAllRanges();
+        renderSub(data);
+        const grid = $('labelGrid');
+        grid.innerHTML = batch.length ? '' : `<p class="empty">${showLabeled ? '아직 라벨 붙인 사진이 없어요.' : '라벨 붙일 사진이 더 없어요.'}</p>`;
+        batch.forEach((p) => grid.appendChild(labelCard(p)));
+        window.scrollTo(0, 0);
+    }
+
+    async function saveMarks(marks) {
+        try {
+            const res = await fetch('/api/label', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kw: currentKw, marks }) });
+            renderSub(await res.json());
+        } catch (e) {
+            alert('저장 실패 - 키워드 서버가 꺼졌는지 확인해 주세요');
+        }
+    }
+
+    function labelCard(p) {
+        const card = document.createElement('div');
+        card.innerHTML = `<img src="/images/${p.id}.jpg" loading="lazy" alt=""><span class="tag"></span><button class="zoom" title="크게 보기">🔍</button>`;
+        const paint = () => {
+            const [cls, text] = LOOK[p.mark] ?? ['', ''];
+            card.className = `card ${cls}`;
+            card.querySelector('.tag').textContent = text;
+        };
+        card.paint = paint;
+        paint();
+        card.onclick = (e) => {
+            if (e.target.classList.contains('zoom')) return openViewer(p.id);
+            p.mark = STATES[(STATES.indexOf(p.mark) + 1) % STATES.length];
+            paint();
+            saveMarks({ [p.id]: p.mark ?? null });
+        };
+        return card;
+    }
+
+    $('restNo').onclick = () => {
+        const marks = {};
+        batch.forEach((p, i) => {
+            if (p.mark === undefined) { p.mark = 0; marks[p.id] = 0; $('labelGrid').children[i].paint(); }
+        });
+        if (Object.keys(marks).length) saveMarks(marks);
+    };
+    $('next').onclick = loadBatch;
+    $('toggleLabeled').onclick = () => { showLabeled = !showLabeled; loadBatch(); };
+
+    // 검색: 입력 중에는 사전으로만, Enter를 누르면 사전에 없는 말을 AI가 해석
+    let searchTimer, searchSeq = 0;
+    // 단어 감각 테스트 결과로 검색할 때 (/?profile=이름) - 신규 가입자처럼 그 사람의 테스트 답만 기준으로 쓴다
+    const profile = new URLSearchParams(location.search).get('profile');
+    if (profile) {
+        $('profileNote').hidden = false;
+        $('profileNote').innerHTML = `'${profile.replace(/[<>&"]/g, '')}'의 테스트 결과 기준으로 검색 중 <a href="/">내 라벨로 돌아가기</a> <a href="/test">테스트 다시 하기</a>`;
+    }
+    // 제외 토글은 다음에 열어도 기억한다 (브라우저 저장소를 못 쓰는 환경이면 그냥 매번 초기화)
+    let excluded = new Set();
+    try { excluded = new Set(JSON.parse(localStorage.getItem('excludedSubjects') || '[]')); } catch (e) {}
+    async function loadSubjects() {
+        const subjects = await (await fetch('/api/subjects')).json();
+        $('excludeToggles').innerHTML = '';
+        subjects.forEach((s) => {
+            const b = document.createElement('button');
+            b.textContent = `${s.ko} ${s.count}`;
+            b.title = `${s.ko} 사진 ${s.count}장을 결과에서 빼요`;
+            b.classList.toggle('on', excluded.has(s.id));
+            b.onclick = () => {
+                excluded.has(s.id) ? excluded.delete(s.id) : excluded.add(s.id);
+                b.classList.toggle('on', excluded.has(s.id));
+                try { localStorage.setItem('excludedSubjects', JSON.stringify([...excluded])); } catch (e) {}
+                runSearch(false);
+            };
+            $('excludeToggles').appendChild(b);
+        });
+    }
+    $('q').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => runSearch(false), 300); });
+    $('q').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { clearTimeout(searchTimer); runSearch(true); } });
+
+    const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+    async function runSearch(ai) {
+        const q = $('q').value.trim();
+        const seq = ++searchSeq; // 늦게 도착한 이전 검색 결과가 최신 결과를 덮어쓰지 않게
+        if (ai) $('aiNote').textContent = 'AI가 해석하는 중…';
+        const data = q ? await (await fetch(`/api/search?q=${encodeURIComponent(q)}&exclude=${[...excluded].join(',')}${profile ? `&profile=${encodeURIComponent(profile)}` : ''}${ai ? '&ai=1' : ''}`)).json()
+            : { keywords: [], include: [], exclude: [], pins: [], unknown: [], interpretations: [], aiEnabled: true };
+        if (seq !== searchSeq) return;
+
+        const chips = [
+            ...data.include.map((k) => `<span class="chip subject">${esc(k)}</span>`),
+            ...data.keywords.map((k) => `<span class="chip">${esc(k)}</span>`),
+            ...data.exclude.map((k) => `<span class="chip excluded">${esc(k)}</span>`)
+        ];
+        data.unknown.forEach((t) => chips.push(`<span class="chip unknown">${esc(t)} ?</span>`));
+        data.interpretations.forEach((r) => {
+            const label = r.kind === 'mapped' ? `${esc(r.term)} → ${r.keywords.map(esc).join(', ')}`
+                : r.kind === 'new' ? `✨ 새 키워드 ${r.keywords.map(esc).join(', ')}`
+                    : r.kind === 'ignored' ? `${esc(r.term)} · 느낌이 아니라 제외` : `${esc(r.term)} · ${esc(r.reason)}`;
+            chips.push(`<span class="chip ai ${r.kind}" title="${esc(r.reason)}">${label}</span>`);
+        });
+        $('chips').innerHTML = chips.join('');
+        $('aiNote').textContent = !data.unknown.length ? ''
+            : data.aiEnabled ? `사전에 없는 말이 있어요. Enter를 누르면 AI가 해석해요.` : `사전에 없는 말이 있어요. AI 연결이 꺼져 있어서 해석할 수 없어요.`;
+        if (data.interpretations.some((r) => r.kind === 'new')) loadKeywords(); // 왼쪽 목록에 새 키워드 표시
+
+        const grid = $('searchGrid');
+        grid.innerHTML = q && !data.keywords.length && !data.include.length && !data.unknown.length ? '<p class="empty">아는 키워드가 없어요. 왼쪽 목록의 키워드나 비슷한 말을 써주세요.</p>' : '';
+        data.pins.forEach((p) => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `<img src="/images/${p.id}.jpg" loading="lazy" alt=""><div class="scores">${p.each.map((s, i) => `${esc(data.keywords[i])} ${s.toFixed(1)}`).join(' · ')}</div>`;
+            card.onclick = () => openViewer(p.id);
+            grid.appendChild(card);
+        });
+    }
+
+    function switchTab(tab) {
+        document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+        $('labelView').hidden = tab !== 'label';
+        $('searchView').hidden = tab !== 'search';
+        if (tab === 'search') { $('q').focus(); runSearch(false); }
+    }
+    document.querySelectorAll('.tabs button').forEach((b) => { b.onclick = () => switchTab(b.dataset.tab); });
+
+    function openViewer(id) {
+        $('viewer').querySelector('img').src = `/images/${id}.jpg`;
+        $('viewer').classList.add('open');
+    }
+    $('viewer').onclick = () => $('viewer').classList.remove('open');
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('viewer').classList.remove('open'); });
+
+    loadKeywords().then(loadBatch);
+    loadSubjects();
+    if (profile) switchTab('search');
+</script>
+</body>
+</html>

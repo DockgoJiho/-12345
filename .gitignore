@@ -7,3 +7,6 @@ dist/
 build/
 .vscode/
 .idea/
+
+# 임베딩 실험 산출물 (용량 큼, 배포 대상 아님)
+experiments/**/out/
