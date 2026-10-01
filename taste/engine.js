@@ -140,22 +140,26 @@ const ownerScore = (id) => {
     return ownerScoreCache.get(id);
 };
 
-const hasSubject = (subjectId, pin) => subjectScores[subjectId][pin] >= SUBJECTS.find((s) => s.id === subjectId).threshold;
+// 이미지 분석이 안 된 핀(임베딩에 없는 핀)은 어떤 주제도 없는 것으로 본다
+const hasSubject = (subjectId, pin) => (subjectScores[subjectId][pin] ?? 0) >= SUBJECTS.find((s) => s.id === subjectId).threshold;
+const isAnalyzed = (pin) => indexes.siglip2.rowOf.has(pin);
 const keywordKo = (id) => KEYWORDS.find((k) => k.id === id).ko;
 const subjectKo = (id) => SUBJECTS.find((s) => s.id === id).ko;
 
 /**
  * 검색. marks가 없으면 아카이브 주인의 라벨을 기준으로 쓴다.
  * excludeToggles: 화면의 제외 버튼으로 끈 주제 id들
+ * candidates: 이 핀 id(Pinterest 원본 id)들 안에서만 찾는다 - 터널 주인의 핀만 대상으로 할 때
  */
-function search(query, { excludeToggles = [], marks = null, limit = 60 } = {}) {
+function search(query, { excludeToggles = [], marks = null, limit = 60, candidates = null } = {}) {
     const subjects = parseSubjects(String(query ?? ''));
     const include = subjects.include;
     const validToggles = excludeToggles.filter((id) => SUBJECTS.some((s) => s.id === id));
     const exclude = [...new Set([...subjects.exclude, ...validToggles])].filter((id) => !include.includes(id));
     const { ids, unknown } = parseKeywords(subjects.rest);
     const criteria = marks ?? ownerLabels;
-    const allowed = (pin) => include.every((s) => hasSubject(s, pin)) && !exclude.some((s) => hasSubject(s, pin));
+    const allowed = (pin) => (!candidates || candidates.has(pin))
+        && include.every((s) => hasSubject(s, pin)) && !exclude.some((s) => hasSubject(s, pin));
 
     let pins = [];
     if (ids.length) {
@@ -172,6 +176,8 @@ function search(query, { excludeToggles = [], marks = null, limit = 60 } = {}) {
             .slice(0, limit);
     }
     return {
+        includeIds: include,
+        excludeIds: exclude,
         include: include.map(subjectKo),
         exclude: exclude.map(subjectKo),
         keywords: ids.map(keywordKo),
@@ -195,10 +201,6 @@ function sanitizeMarks(raw) {
     }
     return clean;
 }
-
-const keywordList = () => KEYWORDS.map((k) => ({ ko: k.ko, group: k.group }));
-
-const subjectCounts = () => SUBJECTS.map((s) => ({ id: s.id, ko: s.ko, count: uniqueIds.filter((pin) => hasSubject(s.id, pin)).length }));
 
 // ── 단어 감각 테스트 ──────────────────────────────────────────
 
@@ -243,4 +245,4 @@ function scoreTest(answers) {
     return { marks, summary };
 }
 
-module.exports = { search, sanitizeMarks, keywordList, subjectCounts, testQuestions, scoreTest };
+module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest };

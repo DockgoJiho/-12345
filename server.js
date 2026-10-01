@@ -304,6 +304,55 @@ const MAIN_COLOR_SYNONYMS = {
     green: ['green', '초록', '초록색', '그린']
 };
 
+/**
+ * 글자 검색 점수. 제목/설명/메모/직접 붙인 태그/대범주/색상명을 하나의 haystack으로 합쳐서
+ * 모든 키워드를 포함하면 점수를, 하나라도 빠지면 null을 돌려준다.
+ */
+function scoreTextMatch(pin, keywords) {
+    const title = (pin.title || '').toLowerCase();
+    const description = (pin.description || '').toLowerCase();
+    const memo = (pin.memo || '').toLowerCase();
+    const tags = Array.isArray(pin.custom_tags) ? pin.custom_tags.map((t) => String(t).toLowerCase()) : [];
+
+    // 대범주/모노크롬-폴리크롬/메인색은 한글·영어 동의어를 전부 haystack에 섞어 넣어서,
+    // "그래픽 아트"와 "Graphic Art"처럼 언어가 달라도 같은 대상으로 매칭되게 한다
+    const categoryEntry = pin.category ? CATEGORY_TAXONOMY.find((c) => c.key === pin.category) : null;
+    const categoryTerms = categoryEntry ? [categoryEntry.key, categoryEntry.en, categoryEntry.ko, ...categoryEntry.synonyms] : [];
+    const colorTypeTerms = pin.color_type ? (COLOR_TYPE_TERMS[pin.color_type] || []) : [];
+    const mainColorTerms = pin.main_color
+        ? (MAIN_COLOR_SYNONYMS[pin.main_color.key] || [pin.main_color.key, pin.main_color.en, pin.main_color.ko])
+        : [];
+
+    const haystack = [
+        title, description, memo, ...tags,
+        ...categoryTerms, ...colorTypeTerms, ...mainColorTerms
+    ].join(' ').toLowerCase();
+
+    // 태그를 하나씩 추가할수록 특정성이 강해지도록, 모든 키워드를 만족해야만 후보에 남긴다
+    if (!keywords.every((kw) => haystack.includes(kw))) return null;
+
+    // 필드별 가중치를 둔 관련도 점수: 직접 붙인 키워드 완전일치 > 대범주/색상 > 제목 > 메모 > 설명
+    let score = 0;
+    keywords.forEach((kw) => {
+        if (tags.includes(kw)) score += 12;
+        else if (tags.some((t) => t.includes(kw))) score += 8;
+        if (categoryTerms.some((t) => t.toLowerCase() === kw)) score += 10;
+        if (colorTypeTerms.includes(kw) || mainColorTerms.some((t) => t.toLowerCase() === kw)) score += 6;
+        if (title.includes(kw)) score += 5;
+        if (memo.includes(kw)) score += 3;
+        if (description.includes(kw)) score += 2;
+    });
+    return score;
+}
+
+/**
+ * 검색. 느낌 키워드("차가운", "빽빽한")나 주제어("사람 없는", "포스터")를 알아들으면 감각 검색으로,
+ * 아니면 기존 글자 검색으로 찾는다.
+ *
+ * 감각 검색의 기준은 터널 주인의 감각이다: 기본 아카이브 주인은 직접 붙인 라벨로, 다른 사람은 AI 기본 해석으로.
+ * 자기 터널을 보는 사람이 단어 감각 테스트를 했다면 그 결과(marks)를 보내 자기 기준으로 검색할 수 있다.
+ * 감각 검색은 이미지 분석이 끝난 핀(Pinterest 원본 id가 taste/data 임베딩에 있는 핀)만 대상으로 한다.
+ */
 app.get('/api/pins/search', async (req, res) => {
     const rawQuery = String(req.query.q || '').trim();
 
@@ -319,55 +368,49 @@ app.get('/api/pins/search', async (req, res) => {
             return res.json({ success: true, query: rawQuery, keywords, total: 0, pins: [] });
         }
 
-        const rows = await fetchAllPins(owner.id);
+        const rows = (await fetchAllPins(owner.id)).filter((pin) => pin.image);
+        const engine = taste();
+        const analyzed = new Map(rows.filter((pin) => pin.source_pin_id && engine.isAnalyzed(pin.source_pin_id))
+            .map((pin) => [pin.source_pin_id, pin]));
 
-        const scored = [];
-        rows.forEach((pin) => {
-            if (!pin.image) return;
+        let viewerMarks = null;
+        try { viewerMarks = req.query.marks ? engine.sanitizeMarks(JSON.parse(req.query.marks)) : null; } catch (e) { /* 잘못된 marks는 무시 */ }
+        const isDefaultArchive = owner.username === DEFAULT_ARCHIVE_USERNAME;
+        const marks = viewerMarks ?? (isDefaultArchive ? null : {});
 
-            const title = (pin.title || '').toLowerCase();
-            const description = (pin.description || '').toLowerCase();
-            const memo = (pin.memo || '').toLowerCase();
-            const tags = Array.isArray(pin.custom_tags) ? pin.custom_tags.map((t) => String(t).toLowerCase()) : [];
+        const feel = engine.search(rawQuery, { marks, candidates: new Set(analyzed.keys()) });
+        const feelActive = feel.keywords.length > 0 || feel.include.length > 0;
+        // 감각 검색이 알아듣지 못한 나머지 말은 글자 검색으로 찾는다 (아무것도 못 알아들었으면 검색어 전체)
+        const textKeywords = feelActive || feel.exclude.length ? feel.unknown : keywords;
+        const excluded = (pin) => pin.source_pin_id && feel.excludeIds.some((id) => engine.hasSubject(id, pin.source_pin_id));
 
-            // 대범주/모노크롬-폴리크롬/메인색은 한글·영어 동의어를 전부 haystack에 섞어 넣어서,
-            // "그래픽 아트"와 "Graphic Art"처럼 언어가 달라도 같은 대상으로 매칭되게 한다
-            const categoryEntry = pin.category ? CATEGORY_TAXONOMY.find((c) => c.key === pin.category) : null;
-            const categoryTerms = categoryEntry ? [categoryEntry.key, categoryEntry.en, categoryEntry.ko, ...categoryEntry.synonyms] : [];
-            const colorTypeTerms = pin.color_type ? (COLOR_TYPE_TERMS[pin.color_type] || []) : [];
-            const mainColorTerms = pin.main_color
-                ? (MAIN_COLOR_SYNONYMS[pin.main_color.key] || [pin.main_color.key, pin.main_color.en, pin.main_color.ko])
+        let ranked;
+        if (feelActive) {
+            ranked = feel.pins.map((p) => ({ pin: analyzed.get(p.id), score: p.score }));
+            // 남은 말까지 맞는 핀이 있으면 그것만 남긴다 (없으면 남은 말은 무시하고 감각 결과를 그대로)
+            if (textKeywords.length) {
+                const narrowed = ranked.filter(({ pin }) => scoreTextMatch(pin, textKeywords) !== null);
+                if (narrowed.length) ranked = narrowed;
+            }
+        } else {
+            ranked = textKeywords.length
+                ? rows.filter((pin) => !excluded(pin))
+                    .map((pin) => ({ pin, score: scoreTextMatch(pin, textKeywords) }))
+                    .filter(({ score }) => score !== null)
+                    .sort((a, b) => b.score - a.score)
                 : [];
+        }
 
-            const haystack = [
-                title, description, memo, ...tags,
-                ...categoryTerms, ...colorTypeTerms, ...mainColorTerms
-            ].join(' ').toLowerCase();
-
-            // 태그를 하나씩 추가할수록 특정성이 강해지도록, 모든 키워드를 만족해야만 후보에 남긴다
-            const matchesAll = keywords.every((kw) => haystack.includes(kw));
-            if (!matchesAll) return;
-
-            // 필드별 가중치를 둔 관련도 점수: 직접 붙인 키워드 완전일치 > 대범주/색상 > 제목 > 메모 > 설명
-            let score = 0;
-            keywords.forEach((kw) => {
-                if (tags.includes(kw)) score += 12;
-                else if (tags.some((t) => t.includes(kw))) score += 8;
-                if (categoryTerms.some((t) => t.toLowerCase() === kw)) score += 10;
-                if (colorTypeTerms.includes(kw) || mainColorTerms.some((t) => t.toLowerCase() === kw)) score += 6;
-                if (title.includes(kw)) score += 5;
-                if (memo.includes(kw)) score += 3;
-                if (description.includes(kw)) score += 2;
-            });
-
-            scored.push({ pin, score });
+        const pins = ranked.slice(0, 60).map(({ pin, score }) => ({ ...mapPin(pin), score }));
+        res.json({
+            success: true,
+            query: rawQuery,
+            keywords,
+            total: ranked.length,
+            // 검색어를 어떻게 알아들었는지 (검색창 아래에 표시)
+            understood: { feel: feel.keywords, include: feel.include, exclude: feel.exclude, text: textKeywords },
+            pins
         });
-
-        scored.sort((a, b) => b.score - a.score);
-
-        const pins = scored.slice(0, 60).map(({ pin, score }) => ({ ...mapPin(pin), score }));
-
-        res.json({ success: true, query: rawQuery, keywords, total: scored.length, pins });
     } catch (error) {
         console.error('검색 실패:', error.message);
         res.status(500).json({ error: '검색에 실패했습니다' });
@@ -812,36 +855,10 @@ app.get('/api/image', async (req, res) => {
 /**
  * 헬스 체크 및 API 상태 확인
  */
-// ── 감각 검색 (주관 키워드 + 주제 필터 + 단어 감각 테스트) ─────────────────
+// ── 감각 검색 엔진 (느낌 키워드 + 주제 필터, /api/pins/search가 사용) + 단어 감각 테스트 ─────
 // 엔진은 미리 계산한 임베딩(약 13MB)을 메모리에 올리므로, 처음 쓰일 때 불러온다
 let tasteEngine = null;
 const taste = () => (tasteEngine ??= require('./taste/engine'));
-
-/**
- * 감각 검색. body: { q, exclude: [주제 id], marks? }
- * marks(단어 감각 테스트 결과)가 있으면 그 사람의 기준으로, 없으면 아카이브 주인의 기준으로 채점한다.
- */
-app.post('/api/taste/search', (req, res) => {
-    try {
-        const { q, exclude, marks } = req.body ?? {};
-        const result = taste().search(q, {
-            excludeToggles: Array.isArray(exclude) ? exclude : [],
-            marks: marks ? taste().sanitizeMarks(marks) : null
-        });
-        res.json({ success: true, ...result });
-    } catch (error) {
-        console.error('감각 검색 실패:', error.message);
-        res.status(500).json({ error: '검색에 실패했습니다' });
-    }
-});
-
-app.get('/api/taste/keywords', (req, res) => {
-    res.json({ success: true, keywords: taste().keywordList() });
-});
-
-app.get('/api/taste/subjects', (req, res) => {
-    res.json({ success: true, subjects: taste().subjectCounts() });
-});
 
 app.get('/api/taste/test', (req, res) => {
     res.json({ success: true, keywords: taste().testQuestions() });
@@ -882,7 +899,6 @@ app.listen(PORT, () => {
     console.log(`   GET  /api/pins/search?q=...&user=... - 핀 검색`);
     console.log(`   GET  /api/pins/:id/related  - 관련 핀`);
     console.log(`   POST /api/pins/import       - 로그인한 사용자의 핀 일괄 등록`);
-    console.log(`   POST /api/taste/search      - 감각 검색 (주관 키워드 + 주제)`);
     console.log(`   GET  /api/taste/test        - 단어 감각 테스트 문제`);
     console.log(`   GET  /api/status            - 서버 상태`);
     console.log(`\n${process.env.SUPABASE_URL ? '✓  Supabase 연동됨' : '⚠️  .env 파일에 SUPABASE_URL/SUPABASE_ANON_KEY를 설정하세요'}`);

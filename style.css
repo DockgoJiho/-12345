@@ -377,6 +377,22 @@ canvas {
     gap: 2px;
 }
 
+.search-understood {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    color: #777;
+}
+
+.search-understood:empty {
+    display: none;
+}
+
+.search-understood b {
+    color: #1a1a1a;
+    font-weight: 600;
+}
+
 .search-status {
     font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
     font-size: 12px;

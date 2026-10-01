@@ -1,159 +1,222 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Word Sense Test</title>
-<link rel="stylesheet" href="taste.css">
-<style>
-    .test-wrap { max-width: 820px; margin: 0 auto; }
-    .progress { height: 3px; background: var(--line); margin-bottom: 18px; }
-    .progress div { height: 100%; background: var(--accent); transition: width 0.2s; }
-    .count { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-    .question { font-size: clamp(20px, 3vw, 26px); margin: 8px 0 20px; font-weight: 400; }
-    .question b { color: var(--accent); }
-    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .pair button { padding: 0; border: 3px solid transparent; background: #000; transition: border-color 0.1s, transform 0.1s; }
-    .pair button:hover { border-color: var(--accent); }
-    .pair button:active { transform: scale(0.98); }
-    .pair img { display: block; width: 100%; aspect-ratio: 4 / 5; object-fit: cover; }
-    .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 16px; }
-    .keys { text-align: center; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-top: 12px; }
-    .summary { list-style: none; margin: 24px 0 32px; border-top: 1px solid var(--line); }
-    .summary li { padding: 14px 0; border-bottom: 1px solid var(--line); font-size: 17px; }
-    [hidden] { display: none !important; }
-    @media (max-width: 700px) { .keys { display: none; } }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Word Sense Test</title>
+    <link rel="stylesheet" href="landing.css">
+    <style>
+        /* 랜딩과 같은 구성: 위는 파란 띠 위의 이미지, 아래는 흰 정보 영역 */
+        html, body { overflow: auto; }
+        .test-page { min-height: 100vh; display: flex; flex-direction: column; }
+
+        .test-band {
+            flex: 0 0 auto;
+            min-height: 64vh;
+            background: #3a3ef2;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 9vh 4vw 5vh;
+        }
+        .band-title { color: #fff; font-size: clamp(28px, 5vw, 64px); font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; text-align: center; }
+        .band-title small { display: block; font-size: 12px; font-weight: 700; letter-spacing: 0.15em; opacity: 0.7; margin-bottom: 18px; }
+
+        .pair { display: flex; gap: 2.2vw; align-items: center; justify-content: center; width: 100%; }
+        .pair button { border: 0; padding: 0; background: none; cursor: pointer; transition: transform 0.18s ease; }
+        .pair button:hover { transform: translateY(-6px); }
+        .pair button:active { transform: scale(0.97); }
+        .pair img { display: block; height: 50vh; width: auto; max-width: 42vw; aspect-ratio: 4 / 5; object-fit: cover; }
+
+        .test-lower {
+            flex: 1 1 auto;
+            background: #fff;
+            display: flex;
+            min-height: 36vh;
+        }
+        .lower-left { flex: 0 0 38%; }
+        .lower-right { flex: 1 1 auto; padding: 28px 4vw 40px; display: flex; flex-direction: column; gap: 14px; }
+
+        .question { font-size: clamp(18px, 2vw, 26px); font-weight: 500; color: #111; letter-spacing: -0.01em; }
+        .question em { color: #ff4433; font-style: normal; font-weight: 700; }
+        .count { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: #999; }
+        .progress { height: 2px; background: #eee; }
+        .progress div { height: 100%; background: #111; transition: width 0.2s ease; }
+        .desc { font-size: 13px; line-height: 1.8; color: #555; max-width: 560px; }
+        .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .actions .auth-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+        .keys { font-size: 11px; color: #999; letter-spacing: 0.04em; }
+
+        .summary { list-style: none; border-top: 1px solid #eee; max-width: 640px; }
+        .summary li { padding: 12px 0; border-bottom: 1px solid #eee; font-size: 14px; color: #111; }
+
+        .top-links { position: fixed; top: 2vh; right: 1.5vw; z-index: 50; display: flex; gap: 8px; }
+
+        [hidden] { display: none !important; }
+
+        @media (max-width: 700px) {
+            .test-band { min-height: 0; padding: 72px 16px 32px; }
+            .pair { gap: 10px; }
+            .pair img { height: auto; width: 100%; max-width: none; }
+            .pair button { flex: 1 1 0; min-width: 0; }
+            .test-lower { flex-direction: column; }
+            .lower-left { display: none; }
+            .lower-right { padding: 24px 16px 40px; }
+            .keys { display: none; }
+        }
+    </style>
 </head>
 <body>
-<header class="taste-header">
-    <a class="brand" href="index.html">PINTEREST ARCHIVE</a>
-    <nav>
-        <a href="gallery.html">TUNNEL</a>
-        <a href="taste.html">TASTE SEARCH</a>
-        <a class="current" href="taste-test.html">단어 감각 테스트</a>
-    </nav>
-</header>
+    <div class="top-links">
+        <a class="auth-btn" href="index.html">HOME</a>
+        <a class="auth-btn" href="gallery.html">MY ARCHIVE</a>
+    </div>
 
-<main class="taste-main">
-    <div class="test-wrap">
+    <div class="test-page">
+        <!-- 시작 -->
         <section id="intro">
-            <div class="eyebrow">Word sense test · 약 2분</div>
-            <h1 class="taste-title">당신의 "차가운"은 어떤 모습인가요?</h1>
-            <p class="lead">같은 단어라도 사람마다 떠올리는 이미지가 달라요. 사진 두 장 중 그 단어에 <b>더 가까운 쪽</b>을 고르면, 검색이 당신의 감각에 맞춰져요. 정답은 없어요.</p>
-            <p class="lead" style="margin-top:8px">결과는 이 브라우저에만 저장돼요.</p>
-            <div class="row" style="justify-content:flex-start;margin-top:24px"><button class="primary" id="start">시작하기</button></div>
+            <div class="test-band">
+                <div class="band-title"><small>WORD SENSE TEST · 2 MIN</small>당신의 "차가운"은<br>어떤 모습인가요?</div>
+            </div>
+            <div class="test-lower">
+                <div class="lower-left"><span class="vertical-label">Word sense*</span></div>
+                <div class="lower-right">
+                    <p class="desc">같은 단어라도 사람마다 떠올리는 이미지가 달라요. 사진 두 장 중 그 단어에 더 가까운 쪽을 고르면, 내 아카이브 검색이 내 감각에 맞춰져요. 정답은 없어요.</p>
+                    <p class="desc">결과는 이 브라우저에만 저장되고, 로그인한 상태로 내 터널에서 검색할 때 기준으로 쓰여요.</p>
+                    <a href="#" class="enter-link" id="start" style="text-align:left">START<br>TEST →</a>
+                </div>
+            </div>
         </section>
 
+        <!-- 문제 -->
         <section id="quiz" hidden>
-            <div class="progress"><div id="bar"></div></div>
-            <div class="count" id="count"></div>
-            <h2 class="question">둘 중 더 <b id="word"></b> 쪽은?</h2>
-            <div class="pair">
-                <button id="left" aria-label="왼쪽 사진 고르기"><img alt=""></button>
-                <button id="right" aria-label="오른쪽 사진 고르기"><img alt=""></button>
+            <div class="test-band">
+                <div class="pair">
+                    <button id="left" aria-label="왼쪽 사진 고르기"><img alt=""></button>
+                    <button id="right" aria-label="오른쪽 사진 고르기"><img alt=""></button>
+                </div>
             </div>
-            <div class="row">
-                <button class="ghost" id="back">← 이전</button>
-                <button class="ghost" id="both">둘 다 맞아</button>
-                <button class="ghost" id="neither">둘 다 아니야</button>
+            <div class="test-lower">
+                <div class="lower-left"><span class="vertical-label">Word sense*</span></div>
+                <div class="lower-right">
+                    <div class="count" id="count"></div>
+                    <div class="progress"><div id="bar"></div></div>
+                    <p class="question">둘 중 더 <em id="word"></em> 쪽은?</p>
+                    <div class="actions">
+                        <button class="auth-btn" id="back">← BACK</button>
+                        <button class="auth-btn" id="both">둘 다 맞아</button>
+                        <button class="auth-btn" id="neither">둘 다 아니야</button>
+                    </div>
+                    <div class="keys">← 왼쪽 · → 오른쪽 · ↑ 둘 다 맞아 · ↓ 둘 다 아니야</div>
+                </div>
             </div>
-            <div class="keys">키보드: ← 왼쪽 · → 오른쪽 · ↑ 둘 다 맞아 · ↓ 둘 다 아니야</div>
         </section>
 
+        <!-- 결과 -->
         <section id="result" hidden>
-            <div class="eyebrow">Your word sense</div>
-            <h1 class="taste-title">당신의 단어 감각</h1>
-            <ul class="summary" id="summary"></ul>
-            <div class="row" style="justify-content:flex-start">
-                <button class="primary" id="compare">아카이브 주인과 나란히 비교하기</button>
-                <button class="ghost" id="again">다시 하기</button>
+            <div class="test-band">
+                <div class="band-title"><small>YOUR WORD SENSE</small>당신의 단어 감각</div>
+            </div>
+            <div class="test-lower">
+                <div class="lower-left"><span class="vertical-label">Word sense*</span></div>
+                <div class="lower-right">
+                    <ul class="summary" id="summary"></ul>
+                    <div class="actions">
+                        <a class="enter-link" href="gallery.html" style="text-align:left">SEARCH MY<br>ARCHIVE →</a>
+                    </div>
+                    <div class="actions"><button class="auth-btn" id="again">다시 하기</button></div>
+                </div>
             </div>
         </section>
     </div>
-</main>
 
-<script>
-    const $ = (id) => document.getElementById(id);
-    let questions = [], answers = [], index = 0;
+    <script>
+        const $ = (id) => document.getElementById(id);
+        let questions = [], answers = [], index = 0;
 
-    // 같은 키워드 문제가 연달아 나오지 않게 섞고, 좌우 위치도 섞는다 (한쪽만 고르는 버릇이 결과에 섞이지 않게)
-    function shuffle(items, seed) {
-        let state = seed;
-        const rand = () => ((state = (state * 1664525 + 1013904223) >>> 0) / 2 ** 32);
-        const out = [...items];
-        for (let i = out.length - 1; i > 0; i--) {
-            const j = Math.floor(rand() * (i + 1));
-            [out[i], out[j]] = [out[j], out[i]];
+        // 같은 키워드 문제가 연달아 나오지 않게 섞고, 좌우 위치도 섞는다 (한쪽만 고르는 버릇이 결과에 섞이지 않게)
+        function shuffle(items, seed) {
+            let state = seed;
+            const rand = () => ((state = (state * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+            const out = [...items];
+            for (let i = out.length - 1; i > 0; i--) {
+                const j = Math.floor(rand() * (i + 1));
+                [out[i], out[j]] = [out[j], out[i]];
+            }
+            return out;
         }
-        return out;
-    }
 
-    async function load() {
-        const { keywords } = await (await fetch('/api/taste/test')).json();
-        const all = keywords.flatMap((k) => k.pairs.map((pins, pair) => ({ keyword: k.id, ko: k.ko, pair, pins })));
-        const seed = Date.now() % 100000;
-        questions = shuffle(all, seed).map((q, i) => ({ ...q, swapped: shuffle([0, 1], seed + i)[0] === 1 }));
-    }
-
-    function show() {
-        const q = questions[index];
-        const [a, b] = q.swapped ? [q.pins[1], q.pins[0]] : q.pins;
-        $('left').querySelector('img').src = `/images/${a}.jpg`;
-        $('right').querySelector('img').src = `/images/${b}.jpg`;
-        $('word').textContent = q.ko;
-        $('count').textContent = `${index + 1} / ${questions.length}`;
-        $('bar').style.width = `${(index / questions.length) * 100}%`;
-        $('back').disabled = index === 0;
-        const next = questions[index + 1];
-        if (next) next.pins.forEach((pin) => { new Image().src = `/images/${pin}.jpg`; });
-    }
-
-    async function answer(choice) {
-        const q = questions[index];
-        // 화면상 왼쪽/오른쪽을 원래 문제의 left/right로 되돌린다
-        const actual = q.swapped && (choice === 'left' || choice === 'right') ? (choice === 'left' ? 'right' : 'left') : choice;
-        answers[index] = { keyword: q.keyword, pair: q.pair, choice: actual };
-        index++;
-        if (index < questions.length) return show();
-        $('bar').style.width = '100%';
-        try {
-            const res = await fetch('/api/taste/test/score', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers })
-            });
-            const { marks, summary } = await res.json();
-            try { localStorage.setItem('tasteProfile', JSON.stringify({ marks, summary, takenAt: new Date().toISOString() })); } catch (e) {}
-            $('summary').innerHTML = '';
-            summary.forEach((s) => {
-                const li = document.createElement('li');
-                li.textContent = s.sentence;
-                $('summary').appendChild(li);
-            });
-            $('quiz').hidden = true;
-            $('result').hidden = false;
-        } catch (e) {
-            alert('결과를 계산하지 못했어요. 잠시 후 다시 시도해 주세요.');
+        async function load() {
+            const { keywords } = await (await fetch('/api/taste/test')).json();
+            const all = keywords.flatMap((k) => k.pairs.map((pins, pair) => ({ keyword: k.id, ko: k.ko, pair, pins })));
+            const seed = Date.now() % 100000;
+            questions = shuffle(all, seed).map((q, i) => ({ ...q, swapped: shuffle([0, 1], seed + i)[0] === 1 }));
         }
-    }
 
-    $('start').onclick = async () => {
-        await load();
-        answers = []; index = 0;
-        $('intro').hidden = true; $('result').hidden = true; $('quiz').hidden = false;
-        show();
-    };
-    $('left').onclick = () => answer('left');
-    $('right').onclick = () => answer('right');
-    $('both').onclick = () => answer('both');
-    $('neither').onclick = () => answer('neither');
-    $('back').onclick = () => { if (index > 0) { index--; show(); } };
-    $('compare').onclick = () => { location.href = 'taste.html?mode=compare&q=' + encodeURIComponent('차가운'); };
-    $('again').onclick = () => $('start').click();
-    document.addEventListener('keydown', (e) => {
-        if ($('quiz').hidden) return;
-        const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'both', ArrowDown: 'neither' };
-        if (map[e.key]) { e.preventDefault(); answer(map[e.key]); }
-    });
-</script>
+        function show() {
+            const q = questions[index];
+            const [a, b] = q.swapped ? [q.pins[1], q.pins[0]] : q.pins;
+            $('left').querySelector('img').src = `/images/${a}.jpg`;
+            $('right').querySelector('img').src = `/images/${b}.jpg`;
+            $('word').textContent = q.ko;
+            $('count').textContent = `${String(index + 1).padStart(2, '0')} / ${questions.length}`;
+            $('bar').style.width = `${(index / questions.length) * 100}%`;
+            $('back').disabled = index === 0;
+            const next = questions[index + 1];
+            if (next) next.pins.forEach((pin) => { new Image().src = `/images/${pin}.jpg`; });
+        }
+
+        function showSection(id) {
+            ['intro', 'quiz', 'result'].forEach((s) => { $(s).hidden = s !== id; });
+            window.scrollTo(0, 0);
+        }
+
+        async function answer(choice) {
+            const q = questions[index];
+            // 화면상 왼쪽/오른쪽을 원래 문제의 left/right로 되돌린다
+            const actual = q.swapped && (choice === 'left' || choice === 'right') ? (choice === 'left' ? 'right' : 'left') : choice;
+            answers[index] = { keyword: q.keyword, pair: q.pair, choice: actual };
+            index++;
+            if (index < questions.length) return show();
+            $('bar').style.width = '100%';
+            try {
+                const res = await fetch('/api/taste/test/score', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers })
+                });
+                const { marks, summary } = await res.json();
+                try { localStorage.setItem('tasteProfile', JSON.stringify({ marks, summary, takenAt: new Date().toISOString() })); } catch (e) {}
+                $('summary').innerHTML = '';
+                summary.forEach((s) => {
+                    const li = document.createElement('li');
+                    li.textContent = s.sentence;
+                    $('summary').appendChild(li);
+                });
+                showSection('result');
+            } catch (e) {
+                alert('결과를 계산하지 못했어요. 잠시 후 다시 시도해 주세요.');
+            }
+        }
+
+        async function start(e) {
+            if (e) e.preventDefault();
+            await load();
+            answers = []; index = 0;
+            showSection('quiz');
+            show();
+        }
+
+        $('start').addEventListener('click', start);
+        $('again').addEventListener('click', () => start());
+        $('left').onclick = () => answer('left');
+        $('right').onclick = () => answer('right');
+        $('both').onclick = () => answer('both');
+        $('neither').onclick = () => answer('neither');
+        $('back').onclick = () => { if (index > 0) { index--; show(); } };
+        document.addEventListener('keydown', (e) => {
+            if ($('quiz').hidden) return;
+            const map = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'both', ArrowDown: 'neither' };
+            if (map[e.key]) { e.preventDefault(); answer(map[e.key]); }
+        });
+    </script>
 </body>
 </html>

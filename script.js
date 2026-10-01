@@ -18,6 +18,7 @@ class ParticleGallery {
         this.searchTagsEl = document.getElementById('search-tags');
         this.searchTagInput = document.getElementById('search-tag-input');
         this.searchResultsEl = document.getElementById('search-results');
+        this.searchUnderstoodEl = document.getElementById('search-understood');
         this.searchTags = [];
         this.searchRequestId = 0;
         this.relatedRequestId = 0;
@@ -977,6 +978,7 @@ class ParticleGallery {
     async runSearch() {
         if (this.searchTags.length === 0) {
             this.searchResultsEl.innerHTML = '';
+            this.searchUnderstoodEl.textContent = '';
             this.filterTunnelByPins(null);
             return;
         }
@@ -986,11 +988,17 @@ class ParticleGallery {
 
         try {
             const query = this.searchTags.join(' ');
-            const response = await fetch(`/api/pins/search?q=${encodeURIComponent(query)}&user=${encodeURIComponent(this.viewingUsername || '')}`);
+            const params = new URLSearchParams({ q: query, user: this.viewingUsername || '' });
+            // 내 터널을 보는 중이고 단어 감각 테스트를 했다면, 그 결과를 내 감각 기준으로 보낸다
+            const myMarks = this.isViewingOwnTunnel() ? this.readTasteMarks() : null;
+            if (myMarks) params.set('marks', JSON.stringify(myMarks));
+            const response = await fetch(`/api/pins/search?${params}`);
             const data = await response.json();
 
             // 태그를 빠르게 추가/삭제하면 응답이 뒤섞여 도착할 수 있으므로, 가장 마지막 요청만 반영한다
             if (requestId !== this.searchRequestId) return;
+
+            this.renderUnderstood(data.understood);
 
             this.renderSearchResults(data.pins || []);
             this.filterTunnelByPins(data.pins || []);
@@ -999,6 +1007,36 @@ class ParticleGallery {
             this.searchResultsEl.innerHTML = '<div class="search-status">검색에 실패했습니다</div>';
             this.filterTunnelByPins(null);
         }
+    }
+
+    isViewingOwnTunnel() {
+        return !!(this.currentUserId && this.viewingUserId && this.currentUserId === this.viewingUserId);
+    }
+
+    // 단어 감각 테스트 결과 (taste-test.html이 이 브라우저에 저장한다)
+    readTasteMarks() {
+        try {
+            const profile = JSON.parse(localStorage.getItem('tasteProfile') || 'null');
+            return profile && profile.marks ? profile.marks : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /** 검색어를 어떻게 알아들었는지 한 줄로: "느낌 차가운·글리치 / 제외 사람 / 글자 고양이" */
+    renderUnderstood(understood) {
+        this.searchUnderstoodEl.innerHTML = '';
+        if (!understood) return;
+        const parts = [
+            ['느낌', understood.feel], ['주제', understood.include],
+            ['제외', understood.exclude], ['글자', understood.text]
+        ].filter(([, words]) => words && words.length);
+        parts.forEach(([label, words], i) => {
+            if (i > 0) this.searchUnderstoodEl.append(' / ');
+            const strong = document.createElement('b');
+            strong.textContent = words.join('·');
+            this.searchUnderstoodEl.append(`${label} `, strong);
+        });
     }
 
     /**
