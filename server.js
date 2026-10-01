@@ -378,7 +378,10 @@ app.get('/api/pins/search', async (req, res) => {
         const isDefaultArchive = owner.username === DEFAULT_ARCHIVE_USERNAME;
         const marks = viewerMarks ?? (isDefaultArchive ? null : {});
 
-        const feel = engine.search(rawQuery, { marks, candidates: new Set(analyzed.keys()) });
+        // 이미지 분석이 된 핀이 하나도 없는 아카이브(아직 분석 전인 다른 사용자)는 기존 글자 검색만 쓴다
+        const feel = analyzed.size
+            ? engine.search(rawQuery, { marks, candidates: new Set(analyzed.keys()) })
+            : { keywords: [], include: [], exclude: [], excludeIds: [], unknown: keywords, pins: [] };
         const feelActive = feel.keywords.length > 0 || feel.include.length > 0;
         // 감각 검색이 알아듣지 못한 나머지 말은 글자 검색으로 찾는다 (아무것도 못 알아들었으면 검색어 전체)
         const textKeywords = feelActive || feel.exclude.length ? feel.unknown : keywords;
