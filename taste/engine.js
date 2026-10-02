@@ -45,32 +45,81 @@ function normalize(v) {
     return v.map((x) => x / n);
 }
 
-/** 키워드 하나에 대한 전체 핀 점수 (핀 id → 표준화 점수) */
+const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+const vecAt = (index, row) => index.data.subarray(row * index.dim, (row + 1) * index.dim);
+
+function zscore(values) {
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const sd = Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length) || 1;
+    return values.map((v) => (v - mean) / sd);
+}
+
+// 맞아·아니야가 각각 이만큼 있으면 경계를 직접 학습하는 분류기를 쓴다 (그보다 적으면 평균 방향)
+const CLASSIFIER_MIN_LABELS = 5;
+const PRIOR_WEIGHT = 0.5;
+
+/**
+ * 맞아(1)/아니야(0)를 가르는 경계를 학습한다 (L2 정규화 로지스틱 회귀, 경사하강).
+ * 두 클래스는 장수와 상관없이 같은 비중으로 다룬다. 반환: 임베딩 공간의 방향 w (점수 = w·x)
+ */
+function trainClassifier(dim, yesVecs, noVecs) {
+    const X = [...yesVecs, ...noVecs];
+    const y = [...yesVecs.map(() => 1), ...noVecs.map(() => 0)];
+    const weight = [...yesVecs.map(() => 0.5 / yesVecs.length), ...noVecs.map(() => 0.5 / noVecs.length)];
+    const w = new Float32Array(dim);
+    let bias = 0;
+    const RATE = 2.0, L2 = 0.01, SCALE = 10; // 임베딩끼리의 유사도 차이가 작아서 SCALE배로 키워 학습한다
+    for (let it = 0; it < 300; it++) {
+        const grad = new Float32Array(dim);
+        let gradBias = 0;
+        X.forEach((x, n) => {
+            const p = 1 / (1 + Math.exp(-(dot(w, x) * SCALE + bias)));
+            const e = (p - y[n]) * weight[n];
+            for (let d = 0; d < dim; d++) grad[d] += e * x[d] * SCALE;
+            gradBias += e;
+        });
+        for (let d = 0; d < dim; d++) w[d] -= RATE * (grad[d] + L2 * w[d]);
+        bias -= RATE * gradBias;
+    }
+    return w;
+}
+
+/**
+ * 키워드 하나에 대한 전체 핀 점수 (핀 id → 표준화 점수).
+ * - 맞아·아니야가 충분하면: 그 사람의 경계를 학습한 분류기 점수 + AI 기본 해석 점수(절반 비중)
+ *   (실험: 학습에 안 쓴 사진 기준 일치도 평균 0.70 → 0.92, experiments/embedding-compare/holdout.mjs)
+ * - 적으면: AI 기본 해석에서 출발해 맞아 쪽으로 당기고 아니야에서 밀어낸 방향 하나
+ */
 function scoreKeyword(keywordId, marks = {}) {
     const fused = new Map();
     for (const name of MODELS) {
         const index = indexes[name];
-        const query = Float32Array.from(starts[keywordId][name]);
+        const start = Float32Array.from(starts[keywordId][name]);
         const rowsWith = (value) => Object.entries(marks)
             .filter(([, v]) => v === value)
             .map(([pin]) => index.rowOf.get(pin))
             .filter((r) => r !== undefined);
-        const pull = (rows, weight) => rows.forEach((r) => {
-            for (let d = 0; d < index.dim; d++) query[d] += weight * index.data[r * index.dim + d] / rows.length;
-        });
-        pull(rowsWith(YES), POSITIVE_WEIGHT);
-        pull(rowsWith(NO), -NEGATIVE_WEIGHT);
-        const q = normalize(query);
+        const yesVecs = rowsWith(YES).map((r) => vecAt(index, r));
+        const noVecs = rowsWith(NO).map((r) => vecAt(index, r));
+        const all = index.ids.map((_, i) => vecAt(index, i));
 
-        const scores = new Float32Array(index.ids.length);
-        for (let i = 0; i < index.ids.length; i++) {
-            let s = 0;
-            for (let d = 0; d < index.dim; d++) s += index.data[i * index.dim + d] * q[d];
-            scores[i] = s;
+        let scores;
+        if (yesVecs.length >= CLASSIFIER_MIN_LABELS && noVecs.length >= CLASSIFIER_MIN_LABELS) {
+            const w = trainClassifier(index.dim, yesVecs, noVecs);
+            const learned = zscore(all.map((x) => dot(x, w)));
+            const prior = zscore(all.map((x) => dot(x, start)));
+            scores = learned.map((s, i) => s + PRIOR_WEIGHT * prior[i]);
+        } else {
+            const query = Float32Array.from(start);
+            const pull = (vecs, weight) => vecs.forEach((v) => {
+                for (let d = 0; d < index.dim; d++) query[d] += weight * v[d] / vecs.length;
+            });
+            pull(yesVecs, POSITIVE_WEIGHT);
+            pull(noVecs, -NEGATIVE_WEIGHT);
+            const q = normalize(query);
+            scores = all.map((x) => dot(x, q));
         }
-        const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-        const sd = Math.sqrt(scores.reduce((a, b) => a + (b - mean) ** 2, 0) / scores.length) || 1;
-        index.ids.forEach((id, i) => fused.set(id, (fused.get(id) ?? 0) + (scores[i] - mean) / sd / MODELS.length));
+        zscore(scores).forEach((z, i) => fused.set(index.ids[i], (fused.get(index.ids[i]) ?? 0) + z / MODELS.length));
     }
     return fused;
 }
@@ -158,7 +207,9 @@ function search(query, { excludeToggles = [], marks = null, limit = 60, candidat
     const exclude = [...new Set([...subjects.exclude, ...validToggles])].filter((id) => !include.includes(id));
     const { ids, unknown } = parseKeywords(subjects.rest);
     const criteria = marks ?? ownerLabels;
-    const allowed = (pin) => (!candidates || candidates.has(pin))
+    // 그 사람이 이 키워드에 직접 '아니야'라고 한 사진은 결과에서 뺀다 (점수로 밀어내는 것만으로는 남는 경우가 있다)
+    const rejected = new Set(ids.flatMap((id) => Object.entries(criteria[id] ?? {}).filter(([, v]) => v === NO).map(([pin]) => pin)));
+    const allowed = (pin) => (!candidates || candidates.has(pin)) && !rejected.has(pin)
         && include.every((s) => hasSubject(s, pin)) && !exclude.some((s) => hasSubject(s, pin));
 
     let pins = [];

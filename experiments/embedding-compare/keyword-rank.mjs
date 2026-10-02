@@ -66,8 +66,10 @@ export function scoreKeyword(model, keywordId, marks = {}) {
  */
 export function searchKeywords(model, keywordIds, labels, k, allowed = () => true) {
     const perKeyword = keywordIds.map((id) => scoreKeyword(model, id, labels[id]));
+    // 직접 '아니야'라고 한 사진은 그 키워드 결과에서 뺀다
+    const rejected = new Set(keywordIds.flatMap((id) => Object.entries(labels[id] ?? {}).filter(([, v]) => v === NO).map(([pin]) => pin)));
     return model.uniqueIds
-        .filter(allowed)
+        .filter((id) => allowed(id) && !rejected.has(id))
         .map((id) => {
             const each = perKeyword.map((m) => m.get(id));
             return { id, score: Math.min(...each), each };
