@@ -14,6 +14,10 @@ function base64ToBytes(b64) {
     return bytes;
 }
 const CARD_TEXTURE_LIMIT = 320;
+// 검색으로 카드 이미지가 바뀔 때: 카드 하나가 옛 이미지에서 사라졌다가 새 이미지로 나타나는 시간,
+// 가까운 카드부터 터널 안쪽 끝까지 그 변화가 번져 가는 시간
+const CARD_FADE_DURATION = 320;
+const CARD_FADE_SPREAD = 260;
 
 class ParticleGallery {
     constructor() {
@@ -47,6 +51,7 @@ class ParticleGallery {
         this.tunnelQuery = '';
         // 이미지 URL → { texture, aspect, promise }. 검색으로 카드 그림을 바꿀 때 같은 이미지를 여러 카드가 같이 쓴다
         this.cardTextures = new Map();
+        this.fadingParticles = new Set();
         this.relatedRequestId = 0;
 
         // 마우스를 따라다니며 검색 버튼을 가리키는 화살표의 상태
@@ -723,8 +728,20 @@ class ParticleGallery {
                         ? img.naturalWidth / img.naturalHeight
                         : 1;
                     entry.aspect = Math.min(Math.max(realAspect, 0.55), 1.8);
-                    entry.texture = this.makeCardTexture(this.renderPlainImageFace(img, entry.aspect));
-                    loaded.dispose();
+                    // 캔버스에 다시 그리지 않고 받은 이미지를 그대로 텍스처로 쓴다 (이미지마다 캔버스를 그리면
+                    // 수십 장이 한꺼번에 도착할 때 화면이 멈칫한다). 카드 비율에 맞게 가운데를 잘라 보이는 건
+                    // renderPlainImageFace의 drawImageCover와 같은 계산을 텍스처 좌표(repeat/offset)로 한다.
+                    const iw = (img && img.naturalWidth) || 1;
+                    const ih = (img && img.naturalHeight) || 1;
+                    const scale = Math.max(entry.aspect / iw, 1 / ih) * 1.08;
+                    const fx = entry.aspect / (iw * scale);
+                    const fy = 1 / (ih * scale);
+                    loaded.repeat.set(fx, fy);
+                    loaded.offset.set((1 - fx) / 2, (1 - fy) / 2);
+                    loaded.magFilter = THREE.LinearFilter;
+                    loaded.minFilter = THREE.LinearMipmapLinearFilter;
+                    loaded.anisotropy = 16;
+                    entry.texture = loaded;
                     resolve(entry);
                 },
                 () => resolve(null)
@@ -1219,6 +1236,7 @@ class ParticleGallery {
             this.shownQuery = '';
             this.tunnelQuery = '';
             this.searchResultsEl.innerHTML = '';
+            this.renderedResultsSignature = null;
             this.searchUnderstoodEl.textContent = '';
             this.filterTunnelByPins(null);
             return;
@@ -1247,6 +1265,7 @@ class ParticleGallery {
                 this.searchPanel.classList.remove('searching');
                 if (err.name === 'AbortError') return;
                 this.searchResultsEl.innerHTML = '<div class="search-status">검색에 실패했습니다</div>';
+                this.renderedResultsSignature = null;
                 return;
             }
         }
@@ -1364,30 +1383,88 @@ class ParticleGallery {
             this.hideEmptyTunnelMessage();
         }
 
+        const now = performance.now();
         const nearestFirst = this.particles.slice().sort((a, b) => b.position.z - a.position.z);
+        const count = nearestFirst.length;
         nearestFirst.forEach((particle, i) => {
             const pin = pins.length ? pins[i % pins.length] : null;
             particle.targetPinId = pin ? pin.id : null;
+            // 가까운 카드부터 차례로 - 변화가 터널 안쪽으로 번져 들어간다
+            const startAt = now + (i / count) * CARD_FADE_SPREAD;
 
             if (!pin) {
-                particle.mesh.visible = false;
-                if (this.hoveredParticle === particle) {
-                    this.hoveredParticle = null;
-                    this.hidePreviewPanel();
-                }
+                if (particle.mesh.visible) this.startCardFade(particle, null, null, startAt);
                 return;
             }
-            if (particle.pinData.id === pin.id && particle.mesh.visible) return;
+            const showing = particle.fade ? particle.fade.pin : (particle.mesh.visible ? particle.pinData : null);
+            if (showing && showing.id === pin.id) {
+                // 이미 이 핀을 보여주고 있거나 그쪽으로 바뀌는 중이면 그대로 둔다
+                return;
+            }
 
             const entry = this.cardTextures.get(pin.image);
             if (entry && entry.texture) {
-                this.swapCardPin(particle, pin, entry);
+                this.startCardFade(particle, pin, entry, startAt);
                 return;
             }
+            // 새 이미지가 아직 없으면 받을 때까지 옛 이미지를 그대로 두고, 받으면 그때 바꾼다
             this.loadCardTexture(pin.image).then((loaded) => {
-                // 받는 사이에 검색어가 또 바뀌었으면 이 이미지는 버린다
-                if (loaded && particle.targetPinId === pin.id) this.swapCardPin(particle, pin, loaded);
+                if (loaded && particle.targetPinId === pin.id) {
+                    this.startCardFade(particle, pin, loaded, Math.max(performance.now(), startAt));
+                }
             });
+        });
+    }
+
+    /** 카드 하나를 옛 이미지 → (사라짐) → 새 이미지(나타남)로 바꾸기 시작한다. pin이 null이면 사라지기만 한다 */
+    startCardFade(particle, pin, textureEntry, startAt) {
+        const material = particle.mesh.material;
+        particle.fade = {
+            start: startAt,
+            pin,
+            textureEntry,
+            // 이미 바뀌는 중이던 카드는 지금 보이는 투명도에서 이어서 시작한다 (깜빡이지 않게)
+            from: particle.mesh.visible ? material.opacity : 0,
+            swapped: false
+        };
+        this.fadingParticles.add(particle);
+    }
+
+    /** 매 프레임: 바뀌는 중인 카드의 투명도를 조절하고, 다 사라진 순간 이미지를 갈아끼운다 */
+    updateCardFades(now) {
+        const OUT = 0.4;
+        this.fadingParticles.forEach((particle) => {
+            const fade = particle.fade;
+            const material = particle.mesh.material;
+            const t = (now - fade.start) / CARD_FADE_DURATION;
+            if (t < 0) return;
+
+            material.transparent = true;
+            if (t < OUT) {
+                material.opacity = fade.from * (1 - t / OUT);
+                return;
+            }
+            if (!fade.swapped) {
+                fade.swapped = true;
+                if (fade.pin) {
+                    this.swapCardPin(particle, fade.pin, fade.textureEntry);
+                } else {
+                    particle.mesh.visible = false;
+                    if (this.hoveredParticle === particle) {
+                        this.hoveredParticle = null;
+                        this.hidePreviewPanel();
+                    }
+                }
+            }
+            const k = Math.min((t - OUT) / (1 - OUT), 1);
+            material.opacity = fade.pin ? 1 - Math.pow(1 - k, 2) : 0;
+            if (k >= 1) {
+                // 다 나타나면 다시 불투명 카드로 (투명 카드는 매 프레임 정렬 비용이 든다)
+                material.opacity = 1;
+                material.transparent = false;
+                particle.fade = null;
+                this.fadingParticles.delete(particle);
+            }
         });
     }
 
@@ -1400,9 +1477,17 @@ class ParticleGallery {
 
     applyCardTexture(particle, { texture, aspect }) {
         const mesh = particle.mesh;
-        const baseHeight = 1.4 * particle.sizeScale;
-        mesh.geometry.dispose();
-        mesh.geometry = new THREE.PlaneGeometry(baseHeight * aspect, baseHeight);
+        const halfH = (1.4 * particle.sizeScale) / 2;
+        const halfW = halfH * aspect;
+        // 도형을 새로 만들지 않고 꼭짓점 네 개만 고친다 (PlaneGeometry 순서: 왼위, 오위, 왼아래, 오아래)
+        const position = mesh.geometry.attributes.position;
+        position.setXYZ(0, -halfW, halfH, 0);
+        position.setXYZ(1, halfW, halfH, 0);
+        position.setXYZ(2, -halfW, -halfH, 0);
+        position.setXYZ(3, halfW, -halfH, 0);
+        position.needsUpdate = true;
+        mesh.geometry.computeBoundingSphere();
+        mesh.geometry.computeBoundingBox();
 
         // 카드가 처음 만들어질 때 받은 자기만의 텍스처는 버리고, 이후로는 공유 텍스처만 쓴다
         const previous = mesh.material.map;
@@ -1410,7 +1495,8 @@ class ParticleGallery {
         mesh.userData.sharedMap = true;
         mesh.userData.isImageLoaded = true;
         mesh.material.map = texture;
-        mesh.material.needsUpdate = true;
+        // 텍스처가 없던 재질에 처음 붙일 때만 셰이더를 다시 만들면 된다 (텍스처끼리 바꾸는 건 필요 없다)
+        if (!previous) mesh.material.needsUpdate = true;
     }
 
     /**
@@ -1431,6 +1517,10 @@ class ParticleGallery {
     }
 
     renderSearchResults(pins) {
+        // 글자를 칠 때마다 불리므로, 결과가 그대로면 목록을 다시 그리지 않는다
+        const signature = pins.length ? pins.map((p) => p.id).join(',') : 'empty';
+        if (signature === this.renderedResultsSignature && this.searchResultsEl.childElementCount) return;
+        this.renderedResultsSignature = signature;
         this.searchResultsEl.innerHTML = '';
 
         if (pins.length === 0) {
@@ -1687,6 +1777,7 @@ class ParticleGallery {
             particle.mesh.material.dispose();
         }
         this.particles = this.particles.filter((p) => p !== particle);
+        this.fadingParticles.delete(particle);
 
         if (this.hoveredParticle === particle) {
             this.hoveredParticle = null;
@@ -2125,6 +2216,8 @@ class ParticleGallery {
             // 사용자가 드래그/휠로 자유롭게 시점을 바꿀 수 있도록 컨트롤 갱신
             this.controls.update();
         }
+
+        if (this.fadingParticles.size) this.updateCardFades(performance.now());
 
         // 호버되지 않은 카드의 스케일을 천천히 원래대로 복원
         this.particles.forEach((particle) => {
