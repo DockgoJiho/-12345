@@ -204,14 +204,27 @@ async function refreshAuthUI(session) {
 }
 
 // ── Pinterest 실계정 연동 ──────────────────────────────────────
-function showPinterestToast(message, isError = false) {
+function showPinterestToast(message, isError = false, duration = 4000) {
     pinterestToast.textContent = message;
     pinterestToast.classList.toggle('error', isError);
     pinterestToast.classList.remove('hidden');
     clearTimeout(showPinterestToast._timer);
     showPinterestToast._timer = setTimeout(() => {
         pinterestToast.classList.add('hidden');
-    }, 4000);
+    }, duration);
+}
+
+// Pinterest 공식 연동(API)은 심사가 끝나야 쓸 수 있다 - 서버에 앱 키가 없으면 아직 준비 중으로 표시한다
+let pinterestOAuthReady = null;
+async function checkPinterestOAuthReady() {
+    if (pinterestOAuthReady !== null) return pinterestOAuthReady;
+    try {
+        const data = await (await fetch('/api/status')).json();
+        pinterestOAuthReady = !!data.hasPinterestOAuth;
+    } catch (err) {
+        pinterestOAuthReady = false;
+    }
+    return pinterestOAuthReady;
 }
 
 async function refreshPinterestButton(accessToken) {
@@ -224,13 +237,19 @@ async function refreshPinterestButton(accessToken) {
     } catch (err) {
         pinterestConnected = false;
     }
-    pinterestConnectBtn.textContent = pinterestConnected ? 'Sync Pinterest' : 'Connect Pinterest';
+    const ready = await checkPinterestOAuthReady();
+    pinterestConnectBtn.textContent = pinterestConnected ? 'Sync Pinterest' : (ready ? 'Connect Pinterest' : 'Connect Pinterest (준비 중)');
 }
 
 pinterestConnectBtn.addEventListener('click', async () => {
     const { data: { session } } = await supabaseClient.auth.getSession();
     if (!session) return;
     const accessToken = session.access_token;
+
+    if (!pinterestConnected && !(await checkPinterestOAuthReady())) {
+        showPinterestToast('Pinterest 계정 바로 연동은 아직 준비 중이에요 (Pinterest 심사 대기). 지금은 개인 페이지의 "핀 가져오기"로 Pinterest 데이터 ZIP을 올려 가져올 수 있어요.', false, 7000);
+        return;
+    }
 
     if (!pinterestConnected) {
         pinterestConnectBtn.disabled = true;
@@ -410,6 +429,11 @@ peopleInput.addEventListener('keydown', (e) => {
 document.addEventListener('click', (e) => {
     if (!e.target.closest('.people-search')) closePeopleResults();
 });
+
+// 처음 가입했을 때 뜨는 안내를 그냥 다시 보고 싶을 때 (index.html?onboarding=1) - 핀이 있어도 연다
+if (new URLSearchParams(window.location.search).get('onboarding') === '1') {
+    Onboarding.open();
+}
 
 // 개인 페이지에서 로그인 없이 팔로우를 누르면 여기로 온다 (index.html?login=1)
 if (new URLSearchParams(window.location.search).get('login') === '1') {
