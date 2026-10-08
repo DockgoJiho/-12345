@@ -163,6 +163,37 @@ async function resolveOwner(username) {
 }
 
 /**
+ * 검색은 타이핑할 때마다 불리므로, 매번 Supabase에서 사용자와 핀 전체를 다시 받아오지 않게 잠깐 기억해 둔다.
+ * 메모 수정·삭제는 브라우저가 Supabase에 직접 쓰기 때문에 서버가 알 수 없다 - 그래서 짧게(30초)만 기억한다.
+ */
+const SEARCH_CACHE_TTL = 30 * 1000;
+const ownerCache = new Map();
+const ownerPinsCache = new Map();
+const searchResultCache = new Map();
+const SEARCH_RESULT_CACHE_LIMIT = 300;
+
+function cached(cache, key, load) {
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.at < SEARCH_CACHE_TTL) return hit.value;
+
+    // 같은 키로 동시에 들어온 요청은 진행 중인 Promise 하나를 같이 기다린다
+    const value = load();
+    const entry = { at: Date.now(), value };
+    if (!hit) {
+        cache.set(key, entry);
+        value.catch(() => cache.delete(key));
+        return value;
+    }
+    // 오래된 값이 있으면 기다리게 하지 않는다: 일단 그걸로 답하고, 새 값은 뒤에서 받아 다음 요청부터 쓴다
+    hit.at = Date.now();
+    value.then(() => cache.set(key, entry), () => {});
+    return hit.value;
+}
+
+const resolveOwnerCached = (username) => cached(ownerCache, username || '', () => resolveOwner(username));
+const fetchOwnerPinsCached = (ownerId) => cached(ownerPinsCache, ownerId, () => fetchAllPins(ownerId));
+
+/**
  * 로그인한 사용자의 요청인지 확인하고, 그 사용자 권한으로 동작하는 Supabase 클라이언트를 만든다.
  * (RLS의 auth.uid() = owner_id 같은 정책이 이 클라이언트를 통한 요청에도 그대로 적용된다.)
  */
@@ -363,12 +394,16 @@ app.get('/api/pins/search', async (req, res) => {
     const keywords = Array.from(new Set(rawQuery.toLowerCase().split(/\s+/).filter(Boolean)));
 
     try {
-        const owner = await resolveOwner(req.query.user);
+        const owner = await resolveOwnerCached(req.query.user);
         if (!owner) {
             return res.json({ success: true, query: rawQuery, keywords, total: 0, pins: [] });
         }
 
-        const rows = (await fetchAllPins(owner.id)).filter((pin) => pin.image);
+        const resultKey = `${owner.id}|${keywords.join(' ')}|${req.query.marks || ''}`;
+        const hit = searchResultCache.get(resultKey);
+        if (hit && Date.now() - hit.at < SEARCH_CACHE_TTL) return res.json(hit.body);
+
+        const rows = (await fetchOwnerPinsCached(owner.id)).filter((pin) => pin.image);
         const engine = taste();
         const analyzed = new Map(rows.filter((pin) => pin.source_pin_id && engine.isAnalyzed(pin.source_pin_id))
             .map((pin) => [pin.source_pin_id, pin]));
@@ -405,7 +440,7 @@ app.get('/api/pins/search', async (req, res) => {
         }
 
         const pins = ranked.slice(0, 60).map(({ pin, score }) => ({ ...mapPin(pin), score }));
-        res.json({
+        const body = {
             success: true,
             query: rawQuery,
             keywords,
@@ -413,7 +448,12 @@ app.get('/api/pins/search', async (req, res) => {
             // 검색어를 어떻게 알아들었는지 (검색창 아래에 표시)
             understood: { feel: feel.keywords, include: feel.include, exclude: feel.exclude, text: textKeywords },
             pins
-        });
+        };
+        if (searchResultCache.size >= SEARCH_RESULT_CACHE_LIMIT) {
+            searchResultCache.delete(searchResultCache.keys().next().value);
+        }
+        searchResultCache.set(resultKey, { at: Date.now(), body });
+        res.json(body);
     } catch (error) {
         console.error('검색 실패:', error.message);
         res.status(500).json({ error: '검색에 실패했습니다' });
@@ -867,6 +907,12 @@ app.get('/api/taste/test', (req, res) => {
     res.json({ success: true, keywords: taste().testQuestions() });
 });
 
+// 검색창 자동완성용 단어 목록 (느낌 키워드 + 주제). 타이핑하는 즉시 브라우저에서 바로 맞춰 보여준다
+app.get('/api/search/vocab', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.json({ success: true, ...taste().vocabulary() });
+});
+
 // 테스트 답 → 기준(marks)과 감각 프로필. 서버에 저장하지 않고 브라우저가 들고 있다가 검색할 때 보낸다
 app.post('/api/taste/test/score', (req, res) => {
     res.json({ success: true, ...taste().scoreTest(req.body?.answers) });
@@ -906,6 +952,9 @@ app.listen(PORT, () => {
     console.log(`   GET  /api/status            - 서버 상태`);
     console.log(`\n${process.env.SUPABASE_URL ? '✓  Supabase 연동됨' : '⚠️  .env 파일에 SUPABASE_URL/SUPABASE_ANON_KEY를 설정하세요'}`);
     console.log(`${'='.repeat(60)}\n`);
+
+    // 느낌 키워드 점수는 처음 검색될 때 계산하면 무료 서버에서 몇 초씩 걸린다 - 켜지자마자 틈틈이 미리 계산해 둔다
+    taste().warmUp();
 });
 
 module.exports = app;

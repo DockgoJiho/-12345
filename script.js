@@ -3,6 +3,10 @@
  * 추상적인 입자가 부유하면서 마우스 인터랙션으로 이미지 미리보기 및 확대 표시
  */
 
+// 타이핑을 이만큼 멈추면 검색한다 (그 전에 친 글자마다 요청을 보내지 않게)
+const SEARCH_TYPING_DELAY = 150;
+const CARD_TEXTURE_LIMIT = 320;
+
 class ParticleGallery {
     constructor() {
         this.container = document.getElementById('canvas-container');
@@ -19,8 +23,20 @@ class ParticleGallery {
         this.searchTagInput = document.getElementById('search-tag-input');
         this.searchResultsEl = document.getElementById('search-results');
         this.searchUnderstoodEl = document.getElementById('search-understood');
+        this.searchSuggestEl = document.getElementById('search-suggest');
         this.searchTags = [];
         this.searchRequestId = 0;
+        // 타이핑하는 대로 검색하기 위한 상태: 자동완성 단어 목록, 입력이 잠깐 멈출 때까지 기다리는 타이머,
+        // 이전 요청 취소용 컨트롤러, 이미 받아본 검색 결과(지웠다가 다시 쓴 검색어는 바로 보여준다)
+        this.searchVocab = null;
+        this.searchTypingTimer = null;
+        this.searchAbort = null;
+        this.searchResponseCache = new Map();
+        this.searchPrefetching = new Set();
+        this.shownQuery = '';
+        this.tunnelQuery = '';
+        // 이미지 URL → { texture, aspect, promise }. 검색으로 카드 그림을 바꿀 때 같은 이미지를 여러 카드가 같이 쓴다
+        this.cardTextures = new Map();
         this.relatedRequestId = 0;
 
         // 마우스를 따라다니며 검색 버튼을 가리키는 화살표의 상태
@@ -452,17 +468,7 @@ class ParticleGallery {
                     // 실제 이미지의 가로세로 비율은 로드된 뒤에 알게 되므로 createImageCard에서 반영한다.
                     sizeScale: 0.75 + Math.random() * 0.6,
                     mesh: null,
-                    pinData: {
-                        id: pinData.id,
-                        title: pinData.title || '제목 없음',
-                        description: pinData.description || '설명 없음',
-                        image: pinData.image || '',
-                        tags: this.extractTags(pinData),
-                        customTags: Array.isArray(pinData.customTags) ? pinData.customTags.slice() : [],
-                        link: pinData.link || '',
-                        creator: pinData.creator || '알 수 없음',
-                        memo: pinData.memo || ''
-                    }
+                    pinData: this.toCardPinData(pinData)
                 };
 
                 // 이미지 텍스쳐를 가진 카드 형태의 파티클 (터널 안쪽, 즉 중심축을 향해 face)
@@ -477,6 +483,20 @@ class ParticleGallery {
                 this.particles.push(particle);
             }
         }
+    }
+
+    toCardPinData(pinData) {
+        return {
+            id: pinData.id,
+            title: pinData.title || '제목 없음',
+            description: pinData.description || '설명 없음',
+            image: pinData.image || '',
+            tags: this.extractTags(pinData),
+            customTags: Array.isArray(pinData.customTags) ? pinData.customTags.slice() : [],
+            link: pinData.link || '',
+            creator: pinData.creator || '알 수 없음',
+            memo: pinData.memo || ''
+        };
     }
 
     /**
@@ -612,14 +632,11 @@ class ParticleGallery {
         // (/images/...)는 그대로 사용하고, 그렇지 않은 경우(Pinterest CDN 원본 URL)는
         // CORS 문제로 서버 프록시를 거쳐서 로드한다
         if (pinData.image && this.textureLoader) {
-            const isLocalImage = pinData.image.startsWith('/images/');
-            const loadUrl = isLocalImage
-                ? pinData.image
-                : `/api/image?url=${encodeURIComponent(pinData.image)}`;
-
             this.textureLoader.load(
-                loadUrl,
+                this.cardImageUrl(pinData.image),
                 (loadedTexture) => {
+                    // 로드되는 사이에 검색으로 이 카드가 다른 핀으로 바뀌었으면 옛 이미지를 덮어쓰지 않는다
+                    if (card.userData.imageUrl !== pinData.image) return;
                     // 실제 이미지의 원본 비율을 알게 됐으니, placeholder 비율 대신 진짜 비율로
                     // 지오메트리를 다시 만든다 (극단적으로 길쭉해지지 않도록만 범위를 제한한다)
                     const img = loadedTexture.image;
@@ -652,6 +669,62 @@ class ParticleGallery {
         }
 
         return card;
+    }
+
+    cardImageUrl(image) {
+        return image.startsWith('/images/') ? image : `/api/image?url=${encodeURIComponent(image)}`;
+    }
+
+    /**
+     * 검색으로 카드 그림을 바꿀 때 쓰는 공유 텍스처. 같은 이미지는 한 번만 받아서 그린다.
+     * 너무 많이 쌓이면 지금 터널에 안 쓰이는 것부터 GPU 메모리에서 내린다.
+     */
+    loadCardTexture(image) {
+        if (!image) return Promise.resolve(null);
+        const existing = this.cardTextures.get(image);
+        if (existing) return existing.promise;
+
+        if (this.cardTextures.size >= CARD_TEXTURE_LIMIT) this.evictCardTextures();
+
+        const entry = { texture: null, aspect: 1, promise: null };
+        entry.promise = new Promise((resolve) => {
+            this.textureLoader.load(
+                this.cardImageUrl(image),
+                (loaded) => {
+                    const img = loaded.image;
+                    const realAspect = img && img.naturalWidth && img.naturalHeight
+                        ? img.naturalWidth / img.naturalHeight
+                        : 1;
+                    entry.aspect = Math.min(Math.max(realAspect, 0.55), 1.8);
+                    entry.texture = this.makeCardTexture(this.renderPlainImageFace(img, entry.aspect));
+                    loaded.dispose();
+                    resolve(entry);
+                },
+                undefined,
+                () => resolve(null)
+            );
+        });
+        this.cardTextures.set(image, entry);
+        return entry.promise;
+    }
+
+    evictCardTextures() {
+        const inUse = new Set(this.particles.map((p) => p.mesh.material.map));
+        for (const [image, entry] of this.cardTextures) {
+            if (this.cardTextures.size < CARD_TEXTURE_LIMIT * 0.8) break;
+            if (entry.texture && !inUse.has(entry.texture)) {
+                entry.texture.dispose();
+                this.cardTextures.delete(image);
+            }
+        }
+    }
+
+    makeCardTexture(canvas) {
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.magFilter = THREE.LinearFilter;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
+        texture.anisotropy = 16;
+        return texture;
     }
 
     /**
@@ -891,11 +964,18 @@ class ParticleGallery {
         });
 
         this.searchToggle.addEventListener('click', () => this.toggleSearchPanel());
+        this.searchTagInput.addEventListener('focus', () => this.loadSearchVocab());
+        this.searchTagInput.addEventListener('input', () => this.onSearchTyping());
         this.searchTagInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
                 e.preventDefault();
-                this.addSearchTag(this.searchTagInput.value);
+                const value = this.searchTagInput.value;
                 this.searchTagInput.value = '';
+                this.addSearchTag(value);
+            } else if (e.key === 'Tab' && !e.isComposing && this.searchSuggestEl.firstChild) {
+                // Tab: 첫 번째 추천 단어로 확정
+                e.preventDefault();
+                this.searchSuggestEl.firstChild.click();
             } else if (e.key === 'Backspace' && this.searchTagInput.value === '' && this.searchTags.length > 0) {
                 this.removeSearchTag(this.searchTags[this.searchTags.length - 1]);
             }
@@ -945,15 +1025,18 @@ class ParticleGallery {
 
     addSearchTag(rawValue) {
         const value = String(rawValue || '').trim().toLowerCase();
-        if (!value || this.searchTags.includes(value)) return;
-        this.searchTags.push(value);
-        this.renderSearchTags();
+        if (value && !this.searchTags.includes(value)) {
+            this.searchTags.push(value);
+            this.renderSearchTags();
+        }
+        this.renderSearchSuggestions();
         this.runSearch();
     }
 
     removeSearchTag(value) {
         this.searchTags = this.searchTags.filter((t) => t !== value);
         this.renderSearchTags();
+        this.renderSearchSuggestions();
         this.runSearch();
     }
 
@@ -975,37 +1058,155 @@ class ParticleGallery {
         });
     }
 
+    /** 자동완성 단어 목록(느낌 키워드·주제)은 검색창에 처음 들어갈 때 한 번만 받아 둔다 */
+    async loadSearchVocab() {
+        if (this.searchVocab) return;
+        this.searchVocab = { keywords: [], subjects: [] };
+        try {
+            const data = await (await fetch('/api/search/vocab')).json();
+            this.searchVocab = { keywords: data.keywords || [], subjects: data.subjects || [] };
+            this.renderSearchSuggestions();
+        } catch (e) {
+            this.searchVocab = null;
+        }
+    }
+
+    /** 확정된 태그 + 지금 치고 있는 말 전체가 검색어다 */
+    currentSearchQuery() {
+        const draft = this.searchTagInput.value.trim().toLowerCase();
+        return [...this.searchTags, draft].filter(Boolean).join(' ');
+    }
+
+    /**
+     * 한 글자 칠 때마다: 추천 단어는 바로 바꾸고, 검색은 입력이 잠깐 멈추면 보낸다.
+     * (한글 조합 중에도 input 이벤트가 오므로 "차가"까지만 쳐도 반응한다)
+     */
+    onSearchTyping() {
+        this.renderSearchSuggestions();
+        clearTimeout(this.searchTypingTimer);
+        this.searchTypingTimer = setTimeout(() => this.runSearch(), SEARCH_TYPING_DELAY);
+    }
+
+    renderSearchSuggestions() {
+        this.searchSuggestEl.innerHTML = '';
+        const draft = this.searchTagInput.value.trim().toLowerCase();
+        if (!draft || !this.searchVocab) return;
+
+        const suggestions = [];
+        const consider = (entry, kind) => {
+            const label = entry.ko.toLowerCase();
+            if (this.searchTags.includes(label)) return;
+            const words = [entry.ko, ...entry.synonyms].map((w) => w.toLowerCase());
+            // 이름 자체가 친 말로 시작하면 먼저, 비슷한 표현으로만 맞으면 그 뒤에 ("사" → 사람이 먼저)
+            if (label.startsWith(draft)) suggestions.push({ label, kind, rank: 0 });
+            else if (words.some((w) => w.startsWith(draft))) suggestions.push({ label, kind, rank: 1 });
+        };
+        this.searchVocab.keywords.forEach((k) => consider(k, '느낌'));
+        this.searchVocab.subjects.forEach((sub) => consider(sub, '주제'));
+        suggestions.sort((a, b) => a.rank - b.rank);
+        if (suggestions[0]) this.prefetchSearch([...this.searchTags, suggestions[0].label].join(' '));
+
+        suggestions.slice(0, 6).forEach(({ label, kind }) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'search-suggest-chip';
+            const kindEl = document.createElement('span');
+            kindEl.className = 'search-suggest-kind';
+            kindEl.textContent = kind;
+            chip.append(kindEl, label);
+            chip.addEventListener('click', () => {
+                this.searchTagInput.value = '';
+                this.addSearchTag(label);
+                this.searchTagInput.focus();
+            });
+            this.searchSuggestEl.appendChild(chip);
+        });
+    }
+
     async runSearch() {
-        if (this.searchTags.length === 0) {
+        clearTimeout(this.searchTypingTimer);
+        const query = this.currentSearchQuery();
+        const typing = this.searchTagInput.value.trim() !== '';
+
+        if (!query) {
+            ++this.searchRequestId;
+            if (this.searchAbort) this.searchAbort.abort();
+            this.searchPanel.classList.remove('searching');
+            this.shownQuery = '';
+            this.tunnelQuery = '';
             this.searchResultsEl.innerHTML = '';
             this.searchUnderstoodEl.textContent = '';
             this.filterTunnelByPins(null);
             return;
         }
+        if (query === this.shownQuery && query === this.tunnelQuery) return;
 
         const requestId = ++this.searchRequestId;
-        this.searchResultsEl.innerHTML = '<div class="search-status">검색 중...</div>';
+        const cacheKey = this.searchCacheKey(query);
 
+        let data = this.searchResponseCache.get(cacheKey);
+        if (!data) {
+            // 결과를 기다리는 동안 이전 결과는 그대로 두고 흐리게만 한다 (글자마다 목록이 깜빡이지 않게)
+            this.searchPanel.classList.add('searching');
+            if (this.searchAbort) this.searchAbort.abort();
+            const controller = new AbortController();
+            this.searchAbort = controller;
+            try {
+                const response = await fetch(`/api/pins/search?${cacheKey}`, { signal: controller.signal });
+                data = await response.json();
+                if (!response.ok) throw new Error(data.error || response.status);
+                this.searchResponseCache.set(cacheKey, data);
+            } catch (err) {
+                if (requestId !== this.searchRequestId) return;
+                this.searchPanel.classList.remove('searching');
+                if (err.name === 'AbortError') return;
+                this.searchResultsEl.innerHTML = '<div class="search-status">검색에 실패했습니다</div>';
+                return;
+            }
+        }
+
+        // 빠르게 타이핑하면 응답이 뒤섞여 도착할 수 있으므로, 가장 마지막 요청만 반영한다
+        if (requestId !== this.searchRequestId) return;
+        this.searchPanel.classList.remove('searching');
+
+        const pins = data.pins || [];
+        this.shownQuery = query;
+        this.renderUnderstood(data.understood);
+        this.renderSearchResults(pins);
+
+        // 아직 치는 중인 말 때문에 결과가 0개면 터널은 그대로 두고 목록에서만 알린다
+        // (한 글자 칠 때마다 터널이 비었다 찼다 하지 않게)
+        if (pins.length === 0 && typing) return;
+        this.tunnelQuery = query;
+        this.filterTunnelByPins(pins);
+    }
+
+    searchCacheKey(query) {
+        const params = new URLSearchParams({ q: query, user: this.viewingUsername || '' });
+        // 내 터널을 보는 중이고 단어 감각 테스트를 했다면, 그 결과를 내 감각 기준으로 보낸다
+        const myMarks = this.isViewingOwnTunnel() ? this.readTasteMarks() : null;
+        if (myMarks) params.set('marks', JSON.stringify(myMarks));
+        return params.toString();
+    }
+
+    /**
+     * 추천 단어가 뜨는 순간 그 단어로 검색했을 때의 결과와 이미지를 미리 받아 둔다.
+     * 사람이 나머지 글자를 치는 동안 받아 두면, 다 쳤을 때는 기다릴 것 없이 바로 바뀐다.
+     */
+    async prefetchSearch(query) {
+        const cacheKey = this.searchCacheKey(query);
+        if (this.searchResponseCache.has(cacheKey) || this.searchPrefetching.has(cacheKey)) return;
+        this.searchPrefetching.add(cacheKey);
         try {
-            const query = this.searchTags.join(' ');
-            const params = new URLSearchParams({ q: query, user: this.viewingUsername || '' });
-            // 내 터널을 보는 중이고 단어 감각 테스트를 했다면, 그 결과를 내 감각 기준으로 보낸다
-            const myMarks = this.isViewingOwnTunnel() ? this.readTasteMarks() : null;
-            if (myMarks) params.set('marks', JSON.stringify(myMarks));
-            const response = await fetch(`/api/pins/search?${params}`);
+            const response = await fetch(`/api/pins/search?${cacheKey}`);
+            if (!response.ok) return;
             const data = await response.json();
-
-            // 태그를 빠르게 추가/삭제하면 응답이 뒤섞여 도착할 수 있으므로, 가장 마지막 요청만 반영한다
-            if (requestId !== this.searchRequestId) return;
-
-            this.renderUnderstood(data.understood);
-
-            this.renderSearchResults(data.pins || []);
-            this.filterTunnelByPins(data.pins || []);
-        } catch (err) {
-            if (requestId !== this.searchRequestId) return;
-            this.searchResultsEl.innerHTML = '<div class="search-status">검색에 실패했습니다</div>';
-            this.filterTunnelByPins(null);
+            this.searchResponseCache.set(cacheKey, data);
+            (data.pins || []).slice(0, 30).forEach((pin) => this.loadCardTexture(pin.image));
+        } catch (e) {
+            // 미리 받기는 실패해도 그만이다 - 실제로 검색할 때 다시 받는다
+        } finally {
+            this.searchPrefetching.delete(cacheKey);
         }
     }
 
@@ -1051,7 +1252,75 @@ class ParticleGallery {
      * 밀도는 유지된다).
      */
     filterTunnelByPins(matchedPins) {
-        this.rebuildTunnel(matchedPins || this.baselinePinsData);
+        const pins = matchedPins || this.baselinePinsData || [];
+        // 카드가 하나도 없던 터널(빈 아카이브 등)은 바꿀 카드가 없으니 새로 만든다
+        if (this.particles.length === 0) {
+            this.rebuildTunnel(pins);
+            return;
+        }
+        this.morphTunnel(pins);
+    }
+
+    /**
+     * 카드를 지우고 새로 만들지 않는다 - 흐르고 있던 터널은 그대로 두고 카드에 붙은 이미지만 갈아끼운다.
+     * 검색 순위가 높은 핀일수록 카메라에 가까운 자리에 온다.
+     * 새 이미지가 아직 안 받아졌으면 받아질 때까지 기존 이미지를 그대로 둔다 (빈 카드로 깜빡이지 않게).
+     */
+    morphTunnel(pins) {
+        this.pinsData = pins;
+        if (pins.length === 0) {
+            this.showEmptyTunnelMessage('일치하는 핀이 없습니다.');
+        } else {
+            this.hideEmptyTunnelMessage();
+        }
+
+        const nearestFirst = this.particles.slice().sort((a, b) => b.position.z - a.position.z);
+        nearestFirst.forEach((particle, i) => {
+            const pin = pins.length ? pins[i % pins.length] : null;
+            particle.targetPinId = pin ? pin.id : null;
+
+            if (!pin) {
+                particle.mesh.visible = false;
+                if (this.hoveredParticle === particle) {
+                    this.hoveredParticle = null;
+                    this.hidePreviewPanel();
+                }
+                return;
+            }
+            if (particle.pinData.id === pin.id && particle.mesh.visible) return;
+
+            const entry = this.cardTextures.get(pin.image);
+            if (entry && entry.texture) {
+                this.swapCardPin(particle, pin, entry);
+                return;
+            }
+            this.loadCardTexture(pin.image).then((loaded) => {
+                // 받는 사이에 검색어가 또 바뀌었으면 이 이미지는 버린다
+                if (loaded && particle.targetPinId === pin.id) this.swapCardPin(particle, pin, loaded);
+            });
+        });
+    }
+
+    swapCardPin(particle, pin, textureEntry) {
+        particle.pinData = this.toCardPinData(pin);
+        particle.mesh.userData.imageUrl = pin.image;
+        particle.mesh.visible = true;
+        this.applyCardTexture(particle, textureEntry);
+    }
+
+    applyCardTexture(particle, { texture, aspect }) {
+        const mesh = particle.mesh;
+        const baseHeight = 1.4 * particle.sizeScale;
+        mesh.geometry.dispose();
+        mesh.geometry = new THREE.PlaneGeometry(baseHeight * aspect, baseHeight);
+
+        // 카드가 처음 만들어질 때 받은 자기만의 텍스처는 버리고, 이후로는 공유 텍스처만 쓴다
+        const previous = mesh.material.map;
+        if (previous && previous !== texture && !mesh.userData.sharedMap) previous.dispose();
+        mesh.userData.sharedMap = true;
+        mesh.userData.isImageLoaded = true;
+        mesh.material.map = texture;
+        mesh.material.needsUpdate = true;
     }
 
     /**
@@ -1158,7 +1427,8 @@ class ParticleGallery {
                 -(y / window.innerHeight) * 2 + 1
             );
             this.raycaster.setFromCamera(point, this.camera);
-            return this.raycaster.intersectObjects(this.particleGroup.children, true);
+            // 검색 결과가 없어서 숨겨 둔 카드는 레이캐스트가 맞히지 않게 한다
+            return this.raycaster.intersectObjects(this.particleGroup.children, true).filter((hit) => hit.object.visible);
         };
 
         const direct = tryPoint(clientX, clientY);
@@ -1319,7 +1589,7 @@ class ParticleGallery {
         this.particleGroup.remove(particle.mesh);
         if (particle.mesh.geometry) particle.mesh.geometry.dispose();
         if (particle.mesh.material) {
-            if (particle.mesh.material.map) particle.mesh.material.map.dispose();
+            if (particle.mesh.material.map && !particle.mesh.userData.sharedMap) particle.mesh.material.map.dispose();
             particle.mesh.material.dispose();
         }
         this.particles = this.particles.filter((p) => p !== particle);

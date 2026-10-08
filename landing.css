@@ -227,24 +227,6 @@ html, body {
     text-overflow: ellipsis;
 }
 
-.landing-links {
-    display: flex;
-    gap: 20px;
-}
-
-.landing-links a {
-    color: #999;
-    text-decoration: none;
-    font-size: 13px;
-    font-weight: 600;
-    border-bottom: 1px solid transparent;
-}
-
-.landing-links a:hover {
-    color: #111;
-    border-bottom-color: #111;
-}
-
 /* ── 로그인 상태 표시: 마퀴 카드가 height:78%로 가운데 정렬되면서 위아래로 남는
    11%씩의 순수 파란 여백(.marquee-card 참고) 중 위쪽 띠 안에, 화면 크기에 비례해서
    배치한다 - 고정 px면 화면이 작아질 때 그 여백을 벗어나 이미지 영역을 침범한다 ── */

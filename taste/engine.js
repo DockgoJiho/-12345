@@ -296,4 +296,22 @@ function scoreTest(answers) {
     return { marks, summary };
 }
 
-module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest };
+/** 검색창 자동완성용: 느낌 키워드와 주제, 각각 알아듣는 표현들 */
+const vocabulary = () => ({
+    keywords: KEYWORDS.map((k) => ({ id: k.id, ko: k.ko, synonyms: k.synonyms })),
+    subjects: SUBJECTS.map((s) => ({ id: s.id, ko: s.ko, synonyms: s.synonyms }))
+});
+
+/** 아카이브 주인 기준 키워드 점수를 하나씩 미리 계산한다 (한 번에 다 하면 그동안 서버가 다른 요청을 못 받는다) */
+function warmUp() {
+    const pending = KEYWORDS.map((k) => k.id);
+    const next = () => {
+        const id = pending.shift();
+        if (!id) return;
+        ownerScore(id);
+        setTimeout(next, 20);
+    };
+    setTimeout(next, 1000);
+}
+
+module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest, vocabulary, warmUp };
