@@ -157,12 +157,10 @@ html, body {
     flex: 1 1 auto;
     background: #fff;
     display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    gap: 8px;
+    gap: 32px;
     padding: 12px 40px;
     min-height: 0;
-    overflow: hidden;
+    min-width: 0;
 }
 
 
@@ -171,6 +169,7 @@ html, body {
 .archive-index {
     flex: 1 1 auto;
     min-height: 0;
+    min-width: 0;
     display: flex;
     flex-direction: column;
 }
@@ -272,6 +271,11 @@ html, body {
     font-size: 12px;
     font-weight: 600;
     color: #fff;
+    text-decoration: none;
+}
+
+.auth-username:hover {
+    text-decoration: underline;
 }
 
 .auth-btn-text {
@@ -471,79 +475,97 @@ html, body {
     min-height: 14px;
 }
 
-/* ── 팔로잉 목록 ── */
-.following-section {
-    flex: 0 0 auto;
+/* ── 사람 찾기 + 팔로잉 목록 (ARCHIVE INDEX 오른쪽 칸) ── */
+.people-section {
+    flex: 0 0 min(320px, 40%);
+    min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    padding-top: 14px;
-    margin-top: 8px;
-    border-top: 1px solid #eee;
+    padding-left: 24px;
+    border-left: 1px solid #eee;
+}
+
+.people-search {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+/* 아래쪽 공간이 좁아서 검색 결과는 입력창 위로 펼친다 */
+.people-results {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 6px);
+    z-index: 30;
+    max-height: 50vh;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #eee;
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+    padding: 6px;
+}
+
+.people-results.hidden {
+    display: none;
+}
+
+.people-results .following-empty {
+    padding: 8px 6px;
+}
+
+.following-section {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 4px;
 }
 
 .following-section.hidden {
     display: none;
 }
 
+.following-header {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #999;
+}
+
 .following-list {
+    flex: 1 1 auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    max-height: 120px;
     overflow-y: auto;
 }
 
-.following-row {
-    font-size: 12px;
-    color: #1a1a1a;
-    text-decoration: none;
-    padding: 2px 0;
-    transition: opacity 0.15s ease;
-}
-
-.following-row:hover {
-    opacity: 0.55;
+.following-list .pu-row {
+    padding: 3px 4px;
 }
 
 .following-empty {
     font-size: 11px;
     color: #999;
-}
-
-.follow-form {
-    display: flex;
-    gap: 6px;
-    margin-top: 4px;
+    line-height: 1.5;
 }
 
 .follow-input {
-    flex: 1 1 auto;
-    min-width: 0;
+    width: 100%;
     font-family: inherit;
-    font-size: 11px;
-    padding: 6px 8px;
+    font-size: 12px;
+    padding: 7px 10px;
     border: 1px solid #ddd;
-    border-radius: 4px;
+    border-radius: 6px;
     outline: none;
 }
 
-.follow-submit {
-    flex: 0 0 auto;
-    background: #111;
-    color: #fff;
-    border: none;
-    border-radius: 4px;
-    padding: 6px 12px;
-    font-family: inherit;
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-}
-
-.follow-status {
-    font-size: 11px;
-    color: #ff4433;
-    min-height: 12px;
+.follow-input:focus {
+    border-color: #111;
 }
 
 /* Pinterest 연동/동기화 결과 토스트 */
@@ -582,7 +604,19 @@ html, body {
         padding: 32px 24px;
     }
     .lower-right {
+        flex-direction: column;
         padding: 28px 24px;
+    }
+    .people-section {
+        flex: 0 0 auto;
+        padding-left: 0;
+        padding-top: 16px;
+        border-left: none;
+        border-top: 1px solid #eee;
+    }
+    .people-results {
+        bottom: auto;
+        top: calc(100% + 6px);
     }
     .vertical-label {
         display: none;

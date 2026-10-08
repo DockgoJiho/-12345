@@ -43,8 +43,8 @@ const PUBLIC_STATIC_BLOCKLIST = new Set([
     'local_pins.json',
     'categories.js'
 ]);
-// 폴더째 막는 경로: 감각 검색 엔진과 그 데이터(내 핀 임베딩, 라벨), 실험 스크립트
-const PUBLIC_STATIC_BLOCKED_DIRS = ['taste/', 'experiments/'];
+// 폴더째 막는 경로: 감각 검색 엔진과 그 데이터(내 핀 임베딩, 라벨), 실험 스크립트, DB 설정 SQL
+const PUBLIC_STATIC_BLOCKED_DIRS = ['taste/', 'experiments/', 'supabase/'];
 app.use((req, res, next) => {
     const requestedFile = req.path.replace(/^\//, '');
     if (PUBLIC_STATIC_BLOCKLIST.has(requestedFile) || PUBLIC_STATIC_BLOCKED_DIRS.some((dir) => requestedFile.startsWith(dir))) {

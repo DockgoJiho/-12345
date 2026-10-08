@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pinterest Archive</title>
+    <link rel="stylesheet" href="profile-ui.css">
     <link rel="stylesheet" href="landing.css">
 </head>
 <body>
@@ -14,7 +15,7 @@
         </div>
         <div id="auth-logged-in" class="auth-logged-in hidden">
             <a id="auth-my-archive" class="auth-btn" href="gallery.html">MY ARCHIVE</a>
-            <span id="auth-username" class="auth-username"></span>
+            <a id="auth-username" class="auth-username" href="#" title="내 페이지"></a>
             <button id="pinterest-connect-btn" class="auth-btn-text">Connect Pinterest</button>
             <button id="auth-logout-btn" class="auth-btn-text">LOG OUT</button>
         </div>
@@ -105,15 +106,18 @@
                     <div class="archive-index-list" id="index-list"></div>
                 </div>
 
-                <!-- 로그인했을 때만 보이는 팔로잉 목록 + 사용자명으로 팔로우하기 -->
-                <div id="following-section" class="following-section hidden">
-                    <div class="archive-index-header">FOLLOWING</div>
-                    <div class="following-list" id="following-list"></div>
-                    <form id="follow-form" class="follow-form">
-                        <input type="text" id="follow-username-input" class="follow-input" placeholder="사용자명으로 팔로우">
-                        <button type="submit" class="follow-submit">Follow</button>
-                    </form>
-                    <div id="follow-status" class="follow-status"></div>
+                <!-- 사람 찾기(누구나) + 로그인했을 때만 보이는 팔로잉 목록.
+                     검색 결과는 아래 공간이 좁아서 입력창 위로 펼쳐진다 -->
+                <div class="people-section">
+                    <div class="archive-index-header">PEOPLE</div>
+                    <div class="people-search">
+                        <div class="people-results hidden" id="people-results"></div>
+                        <input type="search" id="people-search-input" class="follow-input" placeholder="사용자 검색" autocomplete="off">
+                    </div>
+                    <div id="following-section" class="following-section hidden">
+                        <div class="following-header">FOLLOWING</div>
+                        <div class="following-list" id="following-list"></div>
+                    </div>
                 </div>
 
             </div>
@@ -122,6 +126,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js"></script>
     <script src="supabase-client.js"></script>
+    <script src="profile-ui.js"></script>
     <script src="landing-auth.js"></script>
     <script src="landing.js"></script>
 </body>

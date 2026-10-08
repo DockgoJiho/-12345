@@ -1,6 +1,6 @@
 /**
- * 메인 페이지의 로그인/회원가입/로그아웃 상태 관리와, 로그인했을 때 보이는
- * "팔로잉 목록 + 사용자명으로 팔로우" 기능. supabase-client.js가 먼저 로드되어 있어야 한다.
+ * 메인 페이지의 로그인/회원가입/로그아웃 상태 관리, 사람 찾기, 로그인했을 때 보이는 팔로잉 목록.
+ * supabase-client.js, profile-ui.js가 먼저 로드되어 있어야 한다.
  */
 
 let currentUserId = null;
@@ -32,9 +32,6 @@ const signupError = document.getElementById('signup-error');
 
 const followingSection = document.getElementById('following-section');
 const followingList = document.getElementById('following-list');
-const followForm = document.getElementById('follow-form');
-const followUsernameInput = document.getElementById('follow-username-input');
-const followStatus = document.getElementById('follow-status');
 
 const oauthGoogleBtn = document.getElementById('oauth-google-btn');
 const oauthKakaoBtn = document.getElementById('oauth-kakao-btn');
@@ -174,6 +171,7 @@ async function refreshAuthUI(session) {
         authWidget.loggedOut.classList.add('hidden');
         authWidget.loggedIn.classList.remove('hidden');
         authWidget.usernameEl.textContent = currentUsername ? `@${currentUsername}` : '';
+        authWidget.usernameEl.href = currentUsername ? ProfileUI.profileUrl(currentUsername) : '#';
         authWidget.myArchiveLink.href = currentUsername
             ? `gallery.html?user=${encodeURIComponent(currentUsername)}`
             : 'gallery.html';
@@ -343,69 +341,77 @@ async function loadFollowingList() {
         return;
     }
 
-    const { data: rows, error } = await supabaseClient
-        .from('follows')
-        .select('followee_id, profiles!follows_followee_id_fkey(username)')
-        .eq('follower_id', currentUserId);
-
+    let people = [];
+    try {
+        people = await ProfileUI.following(currentUserId);
+    } catch (err) {
+        console.warn('팔로잉 목록 실패:', err);
+    }
     if (requestId !== followingListRequestId) return;
 
-    followingList.innerHTML = '';
-
-    if (error || !rows || rows.length === 0) {
-        followingList.innerHTML = '<div class="following-empty">아직 팔로우한 사람이 없습니다</div>';
+    followingList.replaceChildren();
+    if (!people.length) {
+        followingList.innerHTML = '<div class="following-empty">아직 팔로우한 사람이 없습니다 - 위에서 사람을 찾아 개인 페이지에서 팔로우하세요</div>';
         return;
     }
-
-    rows.forEach((row) => {
-        const username = row.profiles ? row.profiles.username : null;
-        if (!username) return;
-        const link = document.createElement('a');
-        link.className = 'following-row';
-        link.href = `gallery.html?user=${encodeURIComponent(username)}`;
-        link.textContent = `@${username}`;
-        followingList.appendChild(link);
-    });
+    people.forEach((person) => followingList.appendChild(ProfileUI.row(person)));
 }
 
-// ── 사용자명으로 팔로우 ──────────────────────────────────────
-followForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    followStatus.textContent = '';
+// ── 사람 찾기: 칠 때마다 사용자가 뜨고, 줄을 누르면 개인 페이지 / TUNNEL을 누르면 바로 터널로 ──
+const peopleInput = document.getElementById('people-search-input');
+const peopleResults = document.getElementById('people-results');
+let peopleSearchTimer = null;
+let peopleRequestId = 0;
 
-    if (!currentUserId) return;
+function closePeopleResults() {
+    peopleResults.classList.add('hidden');
+}
 
-    const username = followUsernameInput.value.trim();
-    if (!username) return;
-
-    if (username === currentUsername) {
-        followStatus.textContent = '자기 자신은 팔로우할 수 없습니다.';
+async function runPeopleSearch() {
+    const query = peopleInput.value;
+    const requestId = ++peopleRequestId;
+    if (!query.trim()) {
+        closePeopleResults();
         return;
     }
-
-    const { data: target } = await supabaseClient
-        .from('profiles')
-        .select('id')
-        .eq('username', username)
-        .maybeSingle();
-
-    if (!target) {
-        followStatus.textContent = '해당 사용자명을 찾을 수 없습니다.';
-        return;
+    let people = [];
+    try {
+        people = await ProfileUI.searchUsers(query);
+    } catch (err) {
+        console.warn('사용자 검색 실패:', err);
     }
+    if (requestId !== peopleRequestId) return;
 
-    const { error } = await supabaseClient
-        .from('follows')
-        .insert({ follower_id: currentUserId, followee_id: target.id });
-
-    if (error) {
-        // 이미 팔로우 중이면 primary key 충돌로 에러가 난다 - 조용히 무시해도 되는 케이스
-        if (error.code !== '23505') {
-            followStatus.textContent = '팔로우에 실패했습니다.';
-            return;
-        }
+    peopleResults.replaceChildren();
+    if (!people.length) {
+        peopleResults.innerHTML = '<div class="following-empty">일치하는 사용자가 없습니다</div>';
+    } else {
+        people.forEach((person) => peopleResults.appendChild(ProfileUI.row(person)));
     }
+    peopleResults.classList.remove('hidden');
+}
 
-    followUsernameInput.value = '';
-    loadFollowingList();
+peopleInput.addEventListener('input', () => {
+    clearTimeout(peopleSearchTimer);
+    peopleSearchTimer = setTimeout(runPeopleSearch, 120);
 });
+peopleInput.addEventListener('focus', () => {
+    if (peopleInput.value.trim()) runPeopleSearch();
+});
+peopleInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closePeopleResults(); peopleInput.blur(); }
+    // Enter: 맨 위 사람의 개인 페이지로
+    if (e.key === 'Enter' && !e.isComposing && peopleResults.querySelector('.pu-row')) {
+        peopleResults.querySelector('.pu-row').click();
+    }
+});
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.people-search')) closePeopleResults();
+});
+
+// 개인 페이지에서 로그인 없이 팔로우를 누르면 여기로 온다 (index.html?login=1)
+if (new URLSearchParams(window.location.search).get('login') === '1') {
+    supabaseClient.auth.getSession().then(({ data }) => {
+        if (!data.session) openAuthModal('login');
+    });
+}

@@ -1,0 +1,78 @@
+/* 사람 한 줄(사진 + 이름 + 터널 바로가기) - 메인 페이지 검색/팔로잉, 개인 페이지 목록 공통 */
+.pu-avatar {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    overflow: hidden;
+    background: #3a3ef2;
+    color: #fff;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.pu-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.pu-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 4px;
+    border-radius: 6px;
+    color: #1a1a1a;
+    text-decoration: none;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.pu-row:hover,
+.pu-row:focus-visible {
+    background: #f4f4f4;
+}
+
+.pu-names {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    overflow: hidden;
+}
+
+.pu-display {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pu-handle {
+    color: #999;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pu-tunnel {
+    flex: 0 0 auto;
+    color: #ff4433;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-decoration: none;
+    padding: 3px 6px;
+    border-radius: 4px;
+}
+
+.pu-tunnel:hover {
+    background: #ff4433;
+    color: #fff;
+}

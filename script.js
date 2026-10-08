@@ -4,6 +4,9 @@
  */
 
 // 서버에 물어봐야 할 때(검색 색인을 아직 못 받았거나, 내 감각 테스트 기준으로 검색할 때)는
+// 로딩 애니메이션에서 고리 하나가 소실점에서 화면 밖까지 다가오는 시간 (style.css의 animation-duration과 같아야 한다)
+const TUNNEL_LOADER_CYCLE = 2400;
+
 // 타이핑을 이만큼 멈추면 검색한다 (그 전에 친 글자마다 요청을 보내지 않게)
 const SEARCH_TYPING_DELAY = 150;
 
@@ -154,15 +157,18 @@ class ParticleGallery {
     async updateTunnelOwnerBadge() {
         if (!this.tunnelOwnerBadge) return;
 
-        if (!this.viewingUsername || (this.currentUserId && this.currentUserId === this.viewingUserId)) {
+        if (!this.viewingUsername) {
             this.tunnelOwnerBadge.classList.add('hidden');
             return;
         }
 
+        // 내 터널이어도 표시한다 (어디 있는지 알 수 있게). 누르면 그 사람 개인 페이지로
+        const isMine = !!(this.currentUserId && this.currentUserId === this.viewingUserId);
         this.tunnelOwnerBadge.classList.remove('hidden');
-        this.tunnelOwnerText.textContent = `@${this.viewingUsername}의 아카이브`;
+        this.tunnelOwnerText.textContent = isMine ? `@${this.viewingUsername} · 내 아카이브` : `@${this.viewingUsername}의 아카이브`;
+        this.tunnelOwnerText.href = `profile.html?user=${encodeURIComponent(this.viewingUsername)}`;
 
-        if (!this.currentUserId || typeof supabaseClient === 'undefined') {
+        if (isMine || !this.currentUserId || typeof supabaseClient === 'undefined') {
             this.tunnelFollowBtn.classList.add('hidden');
             return;
         }
@@ -390,19 +396,45 @@ class ParticleGallery {
         }
     }
 
+    /**
+     * 터널이 준비되는 동안: 실제 터널처럼 카드 16장짜리 고리들이 소실점에서 이쪽으로 계속 다가오는 애니메이션.
+     * 고리마다 시작 시점을 어긋나게 해서 끊김 없이 흘러가 보이게 한다 (움직임은 style.css의 tunnel-loader-fly).
+     */
     showLoading() {
+        const RINGS = 7;
+        const CARDS_PER_RING = 16;
         const loading = document.createElement('div');
-        loading.className = 'loading';
-        loading.textContent = '📌 Pinterest 핀을 불러오는 중...';
+        loading.className = 'tunnel-loader';
         loading.id = 'loading-indicator';
-        this.container.appendChild(loading);
+
+        for (let r = 0; r < RINGS; r++) {
+            const ring = document.createElement('div');
+            ring.className = 'tunnel-loader-ring';
+            ring.style.animationDelay = `${(-r * TUNNEL_LOADER_CYCLE) / RINGS}ms`;
+            for (let c = 0; c < CARDS_PER_RING; c++) {
+                const card = document.createElement('span');
+                card.className = 'tunnel-loader-card';
+                // 실제 터널처럼 고리마다 반 칸씩 어긋나게(벽돌쌓기)
+                const angle = ((c + (r % 2) * 0.5) / CARDS_PER_RING) * 360;
+                card.style.transform = `rotate(${angle}deg) translateY(-50vmin)`;
+                ring.appendChild(card);
+            }
+            loading.appendChild(ring);
+        }
+
+        const label = document.createElement('div');
+        label.className = 'tunnel-loader-label';
+        label.textContent = 'LOADING';
+        loading.appendChild(label);
+        document.body.appendChild(loading);
     }
 
     hideLoading() {
         const loading = document.getElementById('loading-indicator');
-        if (loading) {
-            loading.remove();
-        }
+        if (!loading) return;
+        // 바로 지우지 않고 살짝 사라지게 해서 진짜 터널로 자연스럽게 넘어가게 한다
+        loading.classList.add('done');
+        setTimeout(() => loading.remove(), 500);
     }
 
     showError(message) {

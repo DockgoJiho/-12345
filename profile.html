@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile · Pinterest Archive</title>
+    <link rel="stylesheet" href="profile-ui.css">
+    <link rel="stylesheet" href="profile.css">
+</head>
+<body>
+    <nav class="pf-nav">
+        <a href="index.html" class="pf-nav-link">← HOME</a>
+        <a id="pf-my-page" href="#" class="pf-nav-link hidden">MY PAGE</a>
+    </nav>
+
+    <header class="pf-banner">
+        <div class="pf-banner-name" id="pf-banner-name"></div>
+    </header>
+
+    <main class="pf-main">
+        <div id="pf-status" class="pf-status">LOADING</div>
+
+        <section id="pf-profile" class="pf-profile hidden">
+            <div class="pf-avatar-slot" id="pf-avatar"></div>
+            <div class="pf-info">
+                <h1 class="pf-display" id="pf-display"></h1>
+                <div class="pf-handle" id="pf-handle"></div>
+                <p class="pf-bio" id="pf-bio"></p>
+                <a class="pf-link hidden" id="pf-link" target="_blank" rel="noopener noreferrer"></a>
+
+                <div class="pf-stats">
+                    <span class="pf-stat"><b id="pf-pin-count">–</b> PINS</span>
+                    <button type="button" class="pf-stat pf-stat-btn" id="pf-followers-btn"><b id="pf-follower-count">–</b> FOLLOWERS</button>
+                    <button type="button" class="pf-stat pf-stat-btn" id="pf-following-btn"><b id="pf-following-count">–</b> FOLLOWING</button>
+                </div>
+
+                <div class="pf-actions">
+                    <a class="pf-btn pf-btn-primary" id="pf-enter-tunnel" href="#">ENTER TUNNEL →</a>
+                    <button type="button" class="pf-btn hidden" id="pf-follow-btn">FOLLOW</button>
+                    <button type="button" class="pf-btn hidden" id="pf-edit-btn">EDIT PROFILE</button>
+                </div>
+            </div>
+        </section>
+
+        <section id="pf-pins-section" class="pf-pins-section hidden">
+            <div class="pf-section-header">ARCHIVE</div>
+            <div class="pf-pins" id="pf-pins"></div>
+        </section>
+    </main>
+
+    <!-- 팔로워 / 팔로잉 목록 -->
+    <div id="pf-list-modal" class="pf-modal hidden">
+        <div class="pf-modal-card">
+            <button type="button" class="pf-modal-close" data-close aria-label="닫기">&times;</button>
+            <div class="pf-tabs">
+                <button type="button" class="pf-tab" data-tab="followers">FOLLOWERS</button>
+                <button type="button" class="pf-tab" data-tab="following">FOLLOWING</button>
+            </div>
+            <div class="pf-list" id="pf-list"></div>
+        </div>
+    </div>
+
+    <!-- 프로필 편집 (본인만) -->
+    <div id="pf-edit-modal" class="pf-modal hidden">
+        <div class="pf-modal-card">
+            <button type="button" class="pf-modal-close" data-close aria-label="닫기">&times;</button>
+            <div class="pf-modal-title">EDIT PROFILE</div>
+            <form id="pf-edit-form" class="pf-form">
+                <div class="pf-avatar-edit">
+                    <div class="pf-avatar-slot pf-avatar-slot-small" id="pf-edit-avatar"></div>
+                    <label class="pf-btn pf-btn-small">
+                        사진 바꾸기
+                        <input type="file" id="pf-avatar-input" accept="image/*" hidden>
+                    </label>
+                    <button type="button" class="pf-text-btn" id="pf-avatar-remove">사진 지우기</button>
+                </div>
+                <label class="pf-field">
+                    <span>이름</span>
+                    <input type="text" id="pf-edit-display" maxlength="40" placeholder="보여질 이름">
+                </label>
+                <label class="pf-field">
+                    <span>소개 <em id="pf-bio-count">0/160</em></span>
+                    <textarea id="pf-edit-bio" maxlength="160" rows="3" placeholder="어떤 이미지를 모으는지 한두 줄로"></textarea>
+                </label>
+                <label class="pf-field">
+                    <span>링크</span>
+                    <input type="text" id="pf-edit-link" maxlength="200" placeholder="instagram.com/... 또는 포트폴리오 주소">
+                </label>
+                <button type="submit" class="pf-btn pf-btn-primary" id="pf-edit-save">저장</button>
+                <div class="pf-form-error" id="pf-edit-error"></div>
+            </form>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js"></script>
+    <script src="supabase-client.js"></script>
+    <script src="profile-ui.js"></script>
+    <script src="profile.js"></script>
+</body>
+</html>
