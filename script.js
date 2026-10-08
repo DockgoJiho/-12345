@@ -643,8 +643,8 @@ class ParticleGallery {
         // (/images/...)는 그대로 사용하고, 그렇지 않은 경우(Pinterest CDN 원본 URL)는
         // CORS 문제로 서버 프록시를 거쳐서 로드한다
         if (pinData.image && this.textureLoader) {
-            this.textureLoader.load(
-                this.cardImageUrl(pinData.image),
+            this.loadCardImage(
+                pinData.image,
                 (loadedTexture) => {
                     // 로드되는 사이에 검색으로 이 카드가 다른 핀으로 바뀌었으면 옛 이미지를 덮어쓰지 않는다
                     if (card.userData.imageUrl !== pinData.image) return;
@@ -671,7 +671,6 @@ class ParticleGallery {
                     card.userData.isImageLoaded = true;
                     console.log('📸 이미지 로드 완료:', pinData.title);
                 },
-                undefined,
                 () => {
                     // 로드 실패 시 캔버스 텍스처 유지
                     console.warn('📸 이미지 로드 실패, 캔버스 텍스처 사용:', pinData.title);
@@ -687,6 +686,23 @@ class ParticleGallery {
     }
 
     /**
+     * 터널 카드는 작은 썸네일(images/t/*.webp, 원본의 1/8 정도)로 그린다 - 검색할 때 수십 장을 한꺼번에
+     * 받아야 해서 원본을 쓰면 다 바뀌는 데 몇 초씩 걸린다. 썸네일이 없는 이미지는 원본으로 대신한다.
+     */
+    thumbUrl(image) {
+        return image.startsWith('/images/') && !image.startsWith('/images/t/')
+            ? image.replace(/^\/images\/([^/]+)\.[^.]+$/, '/images/t/$1.webp')
+            : null;
+    }
+
+    loadCardImage(image, onLoad, onError) {
+        const thumb = this.thumbUrl(image);
+        const loadOriginal = () => this.textureLoader.load(this.cardImageUrl(image), onLoad, undefined, onError);
+        if (thumb && thumb !== image) this.textureLoader.load(thumb, onLoad, undefined, loadOriginal);
+        else loadOriginal();
+    }
+
+    /**
      * 검색으로 카드 그림을 바꿀 때 쓰는 공유 텍스처. 같은 이미지는 한 번만 받아서 그린다.
      * 너무 많이 쌓이면 지금 터널에 안 쓰이는 것부터 GPU 메모리에서 내린다.
      */
@@ -699,8 +715,8 @@ class ParticleGallery {
 
         const entry = { texture: null, aspect: 1, promise: null };
         entry.promise = new Promise((resolve) => {
-            this.textureLoader.load(
-                this.cardImageUrl(image),
+            this.loadCardImage(
+                image,
                 (loaded) => {
                     const img = loaded.image;
                     const realAspect = img && img.naturalWidth && img.naturalHeight
@@ -711,7 +727,6 @@ class ParticleGallery {
                     loaded.dispose();
                     resolve(entry);
                 },
-                undefined,
                 () => resolve(null)
             );
         });
@@ -1432,7 +1447,10 @@ class ParticleGallery {
 
             const thumb = document.createElement('img');
             thumb.className = 'search-result-thumb';
-            thumb.src = pin.image;
+            // 목록의 작은 미리보기도 썸네일로 (없으면 원본)
+            const small = this.thumbUrl(pin.image || '');
+            thumb.src = small || pin.image;
+            if (small) thumb.onerror = () => { thumb.onerror = null; thumb.src = pin.image; };
             thumb.alt = '';
             row.appendChild(thumb);
 

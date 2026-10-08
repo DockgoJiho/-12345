@@ -56,7 +56,10 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname), {
     etag: false,
     lastModified: false,
-    setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache')
+    // 핀 이미지(images/, 썸네일 images/t/)는 파일 이름이 핀 id라 내용이 바뀌지 않는다 - 한 번 받으면 다시 받지 않게 한다.
+    // 나머지(html/js/css)는 배포하면 바로 바뀌어야 하므로 매번 확인한다
+    setHeaders: (res, filePath) => res.setHeader('Cache-Control',
+        filePath.includes(`${path.sep}images${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache')
 }));
 
 // 상수
