@@ -228,7 +228,7 @@ const pinsCache = new Map(); // ownerId -> { rows, total, expiresAt }
 
 app.get('/api/pins', async (req, res) => {
     try {
-        const owner = await resolveOwner(req.query.user);
+        const owner = await resolveOwnerCached(req.query.user);
         if (!owner) {
             return res.json({ success: true, source: 'supabase', count: 0, total: 0, owner: null, pins: [] });
         }
@@ -279,12 +279,13 @@ app.get('/api/pins', async (req, res) => {
  */
 app.get('/api/categories', async (req, res) => {
     try {
-        const owner = await resolveOwner(req.query.user);
+        const owner = await resolveOwnerCached(req.query.user);
         if (!owner) {
             return res.json({ success: true, total: 0, categories: [] });
         }
 
-        const rows = await fetchAllPins(owner.id, 'category, image');
+        // 메인 페이지를 열 때마다 불리므로 검색과 같이 기억해 둔 핀 목록을 쓴다
+        const rows = await fetchOwnerPinsCached(owner.id);
 
         const withImage = rows.filter((pin) => !!pin.image);
         const counts = {};
