@@ -177,39 +177,6 @@
     font-weight: 700;
 }
 
-/* 메일 모양 */
-.ob-mail {
-    border: 1px solid #eee;
-    border-radius: 12px;
-    padding: 14px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    background: #fafafa;
-}
-
-.ob-mail-from {
-    font-size: 11px;
-    color: #e60023;
-    font-weight: 700;
-}
-
-.ob-mail-subject {
-    font-size: 13px;
-    font-weight: 600;
-}
-
-.ob-mail-button {
-    align-self: flex-start;
-    margin-top: 6px;
-    background: #e60023;
-    color: #fff;
-    border-radius: 14px;
-    padding: 5px 14px;
-    font-size: 11px;
-    font-weight: 700;
-}
-
 /* 파일 올리는 곳 */
 .ob-drop {
     display: flex;

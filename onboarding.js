@@ -36,7 +36,7 @@ const Onboarding = (() => {
                     <div class="ob-kicker">WELCOME</div>
                     <h2 class="ob-title" id="ob-title">내 핀이 3D 터널이 됩니다</h2>
                     <p class="ob-text">Pinterest에 모아 둔 이미지가 끝없이 흐르는 터널이 돼요.
-                    "차가운", "사람 없는"처럼 느낌으로 찾고, 다른 사람의 터널도 구경할 수 있어요.</p>
+                    나만의 감각을 키워드로 만들어 보세요.</p>
                     <p class="ob-text ob-muted">먼저 내 핀을 가져와야 해요. 3단계면 끝나요.</p>
                     <div class="ob-actions">
                         <button type="button" class="ob-btn ob-btn-ghost" data-action="later">나중에 할게요</button>
@@ -66,11 +66,6 @@ const Onboarding = (() => {
                 <section class="ob-step" data-step="download">
                     <div class="ob-kicker">STEP 2 / 3</div>
                     <h2 class="ob-title">메일로 온 ZIP 파일 받기</h2>
-                    <div class="ob-mail">
-                        <div class="ob-mail-from">Pinterest</div>
-                        <div class="ob-mail-subject">Pinterest 데이터가 준비되었습니다</div>
-                        <div class="ob-mail-button">다운로드</div>
-                    </div>
                     <ol class="ob-list">
                         <li>Pinterest에서 온 메일의 <b>다운로드</b> 링크를 눌러 <b>ZIP 파일</b>을 받아요</li>
                         <li>압축은 <b>풀지 않아도 돼요</b> - ZIP 그대로 다음 단계에 올리면 돼요</li>
