@@ -94,10 +94,15 @@ function attachSpinHover(card, img) {
  * 마퀴 카드 하나를 만든다. 프레임 없이 이미지 자체만 있고, 카드 전체가
  * 그 핀의 상세 페이지로 가는 링크다. 호버하면 이미지가 계속 회전한다.
  */
+// 메인 배너와 ARCHIVE INDEX가 보여주는 아카이브(기본 아카이브)의 주인. 터널은 이제 각자 자기 것이
+// 기본이라, 여기서 들어가는 링크에는 이 아카이브 주인을 주소에 꼭 적어 준다.
+let featuredUsername = '';
+const featuredTunnel = (extra) => `gallery.html?user=${encodeURIComponent(featuredUsername)}&${extra}`;
+
 function createMarqueeCard(pin) {
     const card = document.createElement('a');
     card.className = 'marquee-card';
-    card.href = `gallery.html?pin=${encodeURIComponent(pin.id)}`;
+    card.href = featuredTunnel(`pin=${encodeURIComponent(pin.id)}`);
 
     const img = document.createElement('img');
     img.className = 'marquee-card-img';
@@ -119,6 +124,7 @@ async function initMarquee() {
     try {
         const res = await fetch('/api/pins');
         const data = await res.json();
+        if (data.owner) featuredUsername = data.owner.username;
         const pins = (data.pins || []).filter((p) => p.image && p.image.startsWith('/images/'));
 
         // 이 브라우저에서 최근에 자세히 본 이미지를 앞쪽에 우선 배치하고,
@@ -157,6 +163,7 @@ async function initArchiveIndex() {
     try {
         const res = await fetch('/api/categories');
         const data = await res.json();
+        if (data.owner) featuredUsername = data.owner.username;
         const categories = (data.categories || []).slice(0, 10);
 
         listEl.innerHTML = '';
@@ -165,7 +172,7 @@ async function initArchiveIndex() {
             // 인덱스에서 바로 터널로 들어가 그 카테고리가 검색된 채로 열리는 바로가기
             const row = document.createElement('a');
             row.className = 'index-row';
-            row.href = `gallery.html?q=${encodeURIComponent(cat.name)}`;
+            row.href = featuredTunnel(`q=${encodeURIComponent(cat.name)}`);
             row.innerHTML = `
                 <span class="index-num">${String(i + 1).padStart(2, '0')}</span>
                 <span class="index-name">${cat.name}</span>

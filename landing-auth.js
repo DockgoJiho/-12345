@@ -175,6 +175,7 @@ async function refreshAuthUI(session) {
         authWidget.myArchiveLink.href = currentUsername
             ? `gallery.html?user=${encodeURIComponent(currentUsername)}`
             : 'gallery.html';
+        enterArchiveLink.href = authWidget.myArchiveLink.href;
 
         followingSection.classList.remove('hidden');
         loadFollowingList();
@@ -349,6 +350,14 @@ usernameSetupForm.addEventListener('submit', async (e) => {
 
 supabaseClient.auth.getSession().then(({ data }) => refreshAuthUI(data.session));
 supabaseClient.auth.onAuthStateChange((_event, session) => refreshAuthUI(session));
+
+// ── ENTER ARCHIVE: 로그인했으면 내 터널로, 안 했으면 로그인부터 (터널은 각자 자기 것) ──
+const enterArchiveLink = document.getElementById('enter-archive-link');
+enterArchiveLink.addEventListener('click', (e) => {
+    if (currentUserId) return;
+    e.preventDefault();
+    openAuthModal('login');
+});
 
 // ── 팔로잉 목록 ──────────────────────────────────────────────
 async function loadFollowingList() {

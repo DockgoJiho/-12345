@@ -301,7 +301,7 @@ app.get('/api/categories', async (req, res) => {
             })
             .sort((a, b) => b.count - a.count);
 
-        res.json({ success: true, total: withImage.length, categories });
+        res.json({ success: true, owner: { id: owner.id, username: owner.username }, total: withImage.length, categories });
     } catch (error) {
         console.error('카테고리 집계 실패:', error.message);
         res.status(500).json({ error: '카테고리를 불러오지 못했습니다' });

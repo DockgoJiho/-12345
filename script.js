@@ -352,7 +352,30 @@ class ParticleGallery {
     async loadPinsFromAPI() {
         try {
             console.log('📌 Pinterest 데이터를 서버에서 로드 중...');
-            const requestedUser = new URLSearchParams(window.location.search).get('user') || '';
+            let requestedUser = new URLSearchParams(window.location.search).get('user') || '';
+
+            // 누구의 터널인지 주소에 없으면: 로그인했으면 내 터널, 아니면 빈 터널 + 로그인 안내
+            // (예전에는 기본 아카이브를 보여줬지만, 처음 온 사람에게 남의 터널이 뜨면 자기 것처럼 보인다)
+            if (!requestedUser) {
+                await this.identityReady;
+                if (this.currentUsername) {
+                    requestedUser = this.currentUsername;
+                    const params = new URLSearchParams(window.location.search);
+                    params.set('user', requestedUser);
+                    history.replaceState(null, '', `${window.location.pathname}?${params}`);
+                } else {
+                    this.pinsData = [];
+                    this.baselinePinsData = [];
+                    this.hideLoading();
+                    this.animate();
+                    this.showEmptyTunnelMessage('로그인하면 내 Pinterest 핀으로 나만의 터널이 만들어져요.', {
+                        label: '로그인하고 시작하기 →',
+                        onClick: () => { window.location.href = 'index.html?login=1'; }
+                    });
+                    return;
+                }
+            }
+
             const response = await fetch(`/api/pins?user=${encodeURIComponent(requestedUser)}`);
 
             if (!response.ok) {
