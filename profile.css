@@ -237,8 +237,49 @@ body {
 }
 
 /* ── 핀 미리보기: 누르면 그 핀이 열린 채로 터널에 들어간다 ── */
+.pf-keywords-section {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid #eee;
+}
+
+.pf-keywords {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pf-keyword {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 8px 14px;
+    border: 1px solid #ddd;
+    border-radius: 18px;
+    color: #1a1a1a;
+    text-decoration: none;
+    font-size: 13px;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.pf-keyword em {
+    font-style: normal;
+    font-size: 11px;
+    color: #999;
+}
+
+.pf-keyword:hover {
+    background: #3a3ef2;
+    border-color: #3a3ef2;
+    color: #fff;
+}
+
+.pf-keyword:hover em {
+    color: rgba(255, 255, 255, 0.75);
+}
+
 .pf-pins-section {
-    margin-top: 48px;
+    margin-top: 40px;
     padding-top: 16px;
     border-top: 1px solid #eee;
 }

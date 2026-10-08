@@ -343,3 +343,188 @@
         animation-duration: 8000ms;
     }
 }
+
+/* ── 감각 테스트 ── */
+.ob-chips,
+.ob-selected {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.ob-selected:empty {
+    display: none;
+}
+
+.ob-chip {
+    border: 1px solid #ddd;
+    background: #fff;
+    color: #1a1a1a;
+    border-radius: 16px;
+    padding: 6px 12px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.ob-chip:hover {
+    border-color: #999;
+}
+
+.ob-chip.on {
+    background: #3a3ef2;
+    border-color: #3a3ef2;
+    color: #fff;
+}
+
+.ob-word-tools {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.ob-text-btn {
+    background: none;
+    border: none;
+    font-family: inherit;
+    font-size: 11px;
+    color: #777;
+    cursor: pointer;
+}
+
+.ob-text-btn:hover {
+    color: #111;
+}
+
+.ob-own-word {
+    display: flex;
+    gap: 6px;
+}
+
+.ob-own-word input {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 9px 12px;
+    border: 1px solid #ddd;
+    border-radius: 18px;
+    outline: none;
+}
+
+.ob-own-word input:focus {
+    border-color: #111;
+}
+
+.ob-pick-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+}
+
+.ob-pick {
+    position: relative;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    overflow: hidden;
+    aspect-ratio: 1;
+    background: #eee;
+    cursor: pointer;
+}
+
+.ob-pick img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.ob-pick:hover img {
+    transform: scale(1.04);
+}
+
+.ob-pick::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 0 #3a3ef2;
+    transition: box-shadow 0.12s ease;
+}
+
+.ob-pick.on::after {
+    box-shadow: inset 0 0 0 4px #3a3ef2;
+}
+
+.ob-pick.on::before {
+    content: '✓';
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 1;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #3a3ef2;
+    color: #fff;
+    font-size: 12px;
+    line-height: 20px;
+    text-align: center;
+}
+
+.ob-pick-count {
+    margin-right: auto;
+    align-self: center;
+    font-size: 12px;
+    color: #777;
+}
+
+.ob-result {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ob-result-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ob-result-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 13px;
+}
+
+.ob-result-head span {
+    font-size: 11px;
+    color: #999;
+}
+
+.ob-result-thumbs {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
+}
+
+.ob-result-thumbs:empty {
+    display: none;
+}
+
+.ob-result-thumbs img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 5px;
+    background: #eee;
+}
+
+@media (max-width: 480px) {
+    .ob-pick-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}

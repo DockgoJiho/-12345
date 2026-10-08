@@ -19,7 +19,22 @@ const Onboarding = (() => {
     let foundPins = [];
     let onFinished = null;
 
-    const STEPS = ['welcome', 'request', 'download', 'upload', 'done'];
+    const STEPS = ['welcome', 'request', 'download', 'upload', 'done', 'taste-words', 'taste-round', 'taste-result'];
+    // 감각 테스트: 단어 하나에 보여줄 내 핀 수, 고를 수 있는 단어 수, 한 번에 보여줄 추천 단어 수
+    const ROUND_SIZE = 12;
+    const MAX_WORDS = 5;
+    const SUGGESTION_COUNT = 14;
+    // 다시 할 때 이미 그 단어로 고른 핀을 몇 장까지 다시 보여줄지 (빼면 그 단어가 지워진다 - 감각이 바뀐 것)
+    const RECHECK_PER_WORD = 4;
+
+    const taste = {
+        vocab: [],          // 추천 단어 (느낌 키워드 이름들)
+        suggestions: [],
+        words: [],          // 고른 단어
+        pins: [],           // 내 핀 { id, image, customTags }
+        rounds: [],         // [{ word, pins: [...], chosen: Set(pin id), preselected: Set }]
+        roundIndex: 0
+    };
 
     // ── 화면 ────────────────────────────────────────────────
 
@@ -101,12 +116,57 @@ const Onboarding = (() => {
 
                 <section class="ob-step" data-step="done">
                     <div class="ob-visual ob-visual-tunnel">${miniTunnel()}</div>
-                    <div class="ob-kicker">COMPLETE</div>
+                    <div class="ob-kicker">PINS READY</div>
                     <h2 class="ob-title" data-done-title>다 됐어요!</h2>
-                    <p class="ob-text">이제 내 터널에 들어가 보세요. 개인 페이지에서 프로필 사진과 소개도 꾸밀 수 있어요.</p>
+                    <p class="ob-text">이제 내 감각을 키워드로 만들어 볼까요?
+                    단어를 고르고, 내 핀 중에서 그 느낌인 이미지를 골라 보세요. 1~2분이면 돼요.</p>
                     <div class="ob-actions">
-                        <a class="ob-btn ob-btn-ghost" data-link="profile" href="#">개인 페이지 꾸미기</a>
-                        <a class="ob-btn ob-btn-primary" data-link="tunnel" href="#">내 터널로 들어가기 →</a>
+                        <a class="ob-btn ob-btn-ghost" data-link="tunnel" href="#">나중에 · 터널로 가기</a>
+                        <button type="button" class="ob-btn ob-btn-primary" data-action="taste-start">감각 테스트 시작 →</button>
+                    </div>
+                </section>
+
+                <section class="ob-step" data-step="taste-words">
+                    <div class="ob-kicker">MY KEYWORDS</div>
+                    <h2 class="ob-title">어떤 단어로 내 감각을 만들까요?</h2>
+                    <p class="ob-text ob-muted">마음에 드는 단어를 골라요 (최대 ${MAX_WORDS}개). 없으면 직접 써도 돼요.</p>
+                    <div class="ob-chips" data-word-chips></div>
+                    <div class="ob-word-tools">
+                        <button type="button" class="ob-text-btn" data-action="taste-shuffle">↻ 다른 단어 보기</button>
+                    </div>
+                    <form class="ob-own-word" data-own-word-form>
+                        <input type="text" maxlength="12" placeholder="내 단어 직접 쓰기 (예: 새벽 같은)" data-own-word>
+                        <button type="submit" class="ob-btn ob-btn-outline">추가</button>
+                    </form>
+                    <div class="ob-selected" data-selected-words></div>
+                    <div class="ob-status" data-taste-status></div>
+                    <div class="ob-actions">
+                        <button type="button" class="ob-btn ob-btn-ghost" data-action="later">나중에 할게요</button>
+                        <button type="button" class="ob-btn ob-btn-primary" data-action="taste-begin" disabled>시작 →</button>
+                    </div>
+                </section>
+
+                <section class="ob-step" data-step="taste-round">
+                    <div class="ob-kicker" data-round-kicker></div>
+                    <h2 class="ob-title" data-round-title></h2>
+                    <p class="ob-text ob-muted">눈에 들어오는 대로 골라요. 정답은 없어요. 하나도 없으면 그냥 넘어가도 돼요.</p>
+                    <div class="ob-pick-grid" data-pick-grid></div>
+                    <div class="ob-actions">
+                        <span class="ob-pick-count" data-pick-count></span>
+                        <button type="button" class="ob-btn ob-btn-primary" data-action="taste-next">다음 →</button>
+                    </div>
+                </section>
+
+                <section class="ob-step" data-step="taste-result">
+                    <div class="ob-kicker">MY KEYWORDS</div>
+                    <h2 class="ob-title">내 감각이 키워드가 됐어요</h2>
+                    <p class="ob-text ob-muted">고른 이미지에 단어가 붙었어요. 터널에서 이 단어로 검색하면 내가 고른 이미지가 나와요.
+                    감각은 바뀌니까, 개인 페이지에서 언제든 다시 할 수 있어요.</p>
+                    <div class="ob-result" data-taste-result></div>
+                    <div class="ob-status" data-save-status></div>
+                    <div class="ob-actions">
+                        <a class="ob-btn ob-btn-ghost" data-link="profile" href="#">개인 페이지 보기</a>
+                        <a class="ob-btn ob-btn-primary" data-link="search" href="#">내 터널에서 검색해 보기 →</a>
                     </div>
                 </section>
             </div>`;
@@ -121,6 +181,10 @@ const Onboarding = (() => {
             if (action === 'later') close(true);
             if (action === 'skip-to-upload') show(STEPS.indexOf('upload'));
             if (action === 'import') runImport();
+            if (action === 'taste-start') startTaste();
+            if (action === 'taste-shuffle') shuffleSuggestions();
+            if (action === 'taste-begin') beginRounds();
+            if (action === 'taste-next') nextRound();
         });
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && !root.classList.contains('hidden')) close(true);
@@ -136,6 +200,13 @@ const Onboarding = (() => {
         ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
         ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
         drop.addEventListener('drop', (e) => readFiles(e.dataTransfer.files));
+
+        root.querySelector('[data-own-word-form]').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const input = root.querySelector('[data-own-word]');
+            addWord(input.value);
+            input.value = '';
+        });
     }
 
     function miniTunnel() {
@@ -287,6 +358,245 @@ const Onboarding = (() => {
         if (onFinished) onFinished(inserted);
     }
 
+    // ── 감각 테스트: 내 핀에서 단어마다 "그 느낌인 이미지"를 고르면, 고른 핀에 그 단어가 키워드로 붙는다 ──
+
+    const shuffle = (list) => {
+        const a = list.slice();
+        for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+    };
+
+    const smallImage = (image) => {
+        if (/^https:\/\/i\.pinimg\.com\/(736x|originals)\//.test(image)) return image.replace(/\/(736x|originals)\//, '/236x/');
+        if (image.startsWith('/images/') && !image.startsWith('/images/t/')) return image.replace(/^\/images\/([^/]+)\.[^.]+$/, '/images/t/$1.webp');
+        return image;
+    };
+
+    function setTasteStatus(text, isError = false) {
+        const el = root.querySelector('[data-taste-status]');
+        el.textContent = text;
+        el.classList.toggle('error', isError);
+    }
+
+    async function startTaste() {
+        me = me || await loadMe();
+        taste.words = [];
+        renderSelectedWords();
+        show(STEPS.indexOf('taste-words'));
+        setTasteStatus('');
+        try {
+            if (!taste.vocab.length) {
+                const data = await (await fetch('/api/search/vocab')).json();
+                taste.vocab = (data.keywords || []).map((k) => k.ko);
+            }
+            shuffleSuggestions();
+            // 내 핀 (가져온 직후라도 바로 보이도록 서버 캐시를 거치지 않고 직접 읽는다)
+            const { data, error } = await supabaseClient.from('pins')
+                .select('id, image, custom_tags').eq('owner_id', me.id).neq('image', '').limit(2000);
+            if (error) throw error;
+            taste.pins = (data || []).filter((p) => p.image).map((p) => ({ id: p.id, image: p.image, customTags: p.custom_tags || [] }));
+            if (taste.pins.length < 4) setTasteStatus('핀이 너무 적어요. 먼저 핀을 가져와 주세요.', true);
+        } catch (err) {
+            setTasteStatus(`내 핀을 불러오지 못했어요: ${err.message}`, true);
+        }
+    }
+
+    function shuffleSuggestions() {
+        taste.suggestions = shuffle(taste.vocab).slice(0, SUGGESTION_COUNT);
+        renderWordChips();
+    }
+
+    function renderWordChips() {
+        const box = root.querySelector('[data-word-chips]');
+        box.replaceChildren();
+        taste.suggestions.forEach((word) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'ob-chip';
+            chip.textContent = word;
+            chip.classList.toggle('on', taste.words.includes(word));
+            chip.addEventListener('click', () => (taste.words.includes(word) ? removeWord(word) : addWord(word)));
+            box.appendChild(chip);
+        });
+    }
+
+    function addWord(raw) {
+        const word = String(raw || '').trim().replace(/\s+/g, ' ');
+        if (!word || taste.words.includes(word)) return;
+        if (taste.words.length >= MAX_WORDS) {
+            setTasteStatus(`단어는 ${MAX_WORDS}개까지 고를 수 있어요`, true);
+            return;
+        }
+        setTasteStatus('');
+        taste.words.push(word);
+        renderSelectedWords();
+        renderWordChips();
+    }
+
+    function removeWord(word) {
+        taste.words = taste.words.filter((w) => w !== word);
+        setTasteStatus('');
+        renderSelectedWords();
+        renderWordChips();
+    }
+
+    function renderSelectedWords() {
+        const box = root.querySelector('[data-selected-words]');
+        box.replaceChildren();
+        taste.words.forEach((word) => {
+            const tag = document.createElement('button');
+            tag.type = 'button';
+            tag.className = 'ob-chip on';
+            tag.textContent = `${word} ×`;
+            tag.addEventListener('click', () => removeWord(word));
+            box.appendChild(tag);
+        });
+        root.querySelector('[data-action="taste-begin"]').disabled = taste.words.length === 0 || taste.pins.length < 4;
+        root.querySelector('[data-action="taste-begin"]').textContent = taste.words.length
+            ? `${taste.words.length}개 단어로 시작 →` : '시작 →';
+    }
+
+    function beginRounds() {
+        // 단어마다 서로 다른 핀을 보여준다 (핀이 모자라면 겹칠 수 있다)
+        let pool = shuffle(taste.pins);
+        taste.rounds = taste.words.map((word) => {
+            // 다시 하는 경우: 전에 이 단어로 고른 핀 몇 장은 다시 보여준다 (안 고르면 그 단어가 빠진다)
+            const previous = shuffle(taste.pins.filter((p) => p.customTags.includes(word))).slice(0, RECHECK_PER_WORD);
+            const fresh = [];
+            while (fresh.length < ROUND_SIZE - previous.length) {
+                if (!pool.length) pool = shuffle(taste.pins);
+                const pin = pool.pop();
+                if (!previous.includes(pin) && !fresh.includes(pin)) fresh.push(pin);
+                if (fresh.length + previous.length >= taste.pins.length) break;
+            }
+            const pins = shuffle([...previous, ...fresh]);
+            const preselected = new Set(previous.map((p) => p.id));
+            return { word, pins, chosen: new Set(preselected), preselected };
+        });
+        taste.roundIndex = 0;
+        renderRound();
+        show(STEPS.indexOf('taste-round'));
+    }
+
+    function renderRound() {
+        const round = taste.rounds[taste.roundIndex];
+        root.querySelector('[data-round-kicker]').textContent = `WORD ${taste.roundIndex + 1} / ${taste.rounds.length}`;
+        root.querySelector('[data-round-title]').textContent = `'${round.word}' 느낌인 이미지를 골라 보세요`;
+        const grid = root.querySelector('[data-pick-grid]');
+        grid.replaceChildren();
+        round.pins.forEach((pin) => {
+            const cell = document.createElement('button');
+            cell.type = 'button';
+            cell.className = 'ob-pick';
+            cell.classList.toggle('on', round.chosen.has(pin.id));
+            const img = document.createElement('img');
+            img.src = smallImage(pin.image);
+            img.alt = '';
+            img.onerror = () => { img.onerror = null; img.src = pin.image; };
+            cell.appendChild(img);
+            cell.addEventListener('click', () => {
+                if (round.chosen.has(pin.id)) round.chosen.delete(pin.id);
+                else round.chosen.add(pin.id);
+                cell.classList.toggle('on', round.chosen.has(pin.id));
+                renderPickCount();
+            });
+            grid.appendChild(cell);
+        });
+        renderPickCount();
+        root.querySelector('[data-action="taste-next"]').textContent = taste.roundIndex === taste.rounds.length - 1 ? '완료 →' : '다음 →';
+    }
+
+    function renderPickCount() {
+        const round = taste.rounds[taste.roundIndex];
+        root.querySelector('[data-pick-count]').textContent = `${round.chosen.size}장 고름`;
+    }
+
+    function nextRound() {
+        if (taste.roundIndex < taste.rounds.length - 1) {
+            taste.roundIndex += 1;
+            renderRound();
+            root.querySelector('.ob-card').scrollTop = 0;
+            return;
+        }
+        finishTaste();
+    }
+
+    /** 고른 핀에는 그 단어를 붙이고, 보여줬는데 안 고른 핀에서는 그 단어를 뗀다 (감각 갱신) */
+    async function finishTaste() {
+        show(STEPS.indexOf('taste-result'));
+        renderResult();
+        const status = root.querySelector('[data-save-status]');
+        status.classList.remove('error');
+        status.textContent = '저장하는 중...';
+
+        const newTags = new Map();
+        const tagsOf = (pin) => newTags.get(pin.id) || pin.customTags.slice();
+        taste.rounds.forEach((round) => {
+            round.pins.forEach((pin) => {
+                const tags = tagsOf(pin);
+                const has = tags.includes(round.word);
+                if (round.chosen.has(pin.id) && !has) tags.push(round.word);
+                if (!round.chosen.has(pin.id) && has) tags.splice(tags.indexOf(round.word), 1);
+                newTags.set(pin.id, tags);
+            });
+        });
+        const changed = [...newTags].filter(([id, tags]) => {
+            const before = taste.pins.find((p) => p.id === id).customTags;
+            return before.length !== tags.length || before.some((t) => !tags.includes(t));
+        });
+
+        try {
+            for (let i = 0; i < changed.length; i += 8) {
+                await Promise.all(changed.slice(i, i + 8).map(async ([id, tags]) => {
+                    const { error } = await supabaseClient.from('pins').update({ custom_tags: tags }).eq('id', id);
+                    if (error) throw error;
+                    taste.pins.find((p) => p.id === id).customTags = tags;
+                }));
+            }
+            status.textContent = '저장했어요';
+            if (onTasteSaved) onTasteSaved();
+        } catch (err) {
+            status.classList.add('error');
+            status.textContent = `저장하지 못했어요: ${err.message}`;
+        }
+
+        const firstWord = (taste.rounds.find((r) => r.chosen.size) || taste.rounds[0]).word;
+        const search = root.querySelector('[data-link="search"]');
+        search.href = `gallery.html?user=${encodeURIComponent(me.username)}&q=${encodeURIComponent(firstWord)}`;
+        search.textContent = `터널에서 '${firstWord}' 검색해 보기 →`;
+    }
+
+    function renderResult() {
+        const box = root.querySelector('[data-taste-result]');
+        box.replaceChildren();
+        taste.rounds.forEach((round) => {
+            const row = document.createElement('div');
+            row.className = 'ob-result-row';
+            const head = document.createElement('div');
+            head.className = 'ob-result-head';
+            head.innerHTML = '<b></b><span></span>';
+            head.querySelector('b').textContent = round.word;
+            head.querySelector('span').textContent = round.chosen.size
+                ? `${round.pins.length}장 중 ${round.chosen.size}장`
+                : '고른 이미지 없음';
+            const thumbs = document.createElement('div');
+            thumbs.className = 'ob-result-thumbs';
+            round.pins.filter((p) => round.chosen.has(p.id)).slice(0, 6).forEach((pin) => {
+                const img = document.createElement('img');
+                img.src = smallImage(pin.image);
+                img.alt = '';
+                thumbs.appendChild(img);
+            });
+            row.append(head, thumbs);
+            box.appendChild(row);
+        });
+    }
+
+    let onTasteSaved = null;
+
     // ── 공개 함수 ───────────────────────────────────────────
 
     async function loadMe() {
@@ -297,10 +607,11 @@ const Onboarding = (() => {
     }
 
     /** 안내를 연다. startAt: 'welcome' | 'upload' 등. onDone(가져온 개수): 다 가져온 뒤 불린다 */
-    async function open({ startAt = 'welcome', onDone = null } = {}) {
+    async function open({ startAt = 'welcome', onDone = null, onTaste = null } = {}) {
         if (!root) build();
         me = me || await loadMe();
         onFinished = onDone;
+        onTasteSaved = onTaste;
         const links = root.querySelectorAll('[data-link]');
         if (me) {
             links.forEach((a) => {
@@ -311,7 +622,8 @@ const Onboarding = (() => {
         }
         resetUpload();
         root.classList.remove('hidden');
-        show(STEPS.indexOf(startAt));
+        if (startAt === 'taste') startTaste();
+        else show(STEPS.indexOf(startAt));
     }
 
     /** 로그인했고, 핀이 하나도 없고, 최근에 "나중에"를 누르지 않았으면 연다 */

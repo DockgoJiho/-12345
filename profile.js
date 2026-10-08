@@ -25,6 +25,9 @@ const els = {
     followBtn: $('pf-follow-btn'),
     editBtn: $('pf-edit-btn'),
     importBtn: $('pf-import-btn'),
+    tasteBtn: $('pf-taste-btn'),
+    keywordsSection: $('pf-keywords-section'),
+    keywords: $('pf-keywords'),
     myPage: $('pf-my-page'),
     pinsSection: $('pf-pins-section'),
     pins: $('pf-pins'),
@@ -127,7 +130,8 @@ async function init() {
 
     loadCounts();
     loadPins();
-    if (isOwn()) Onboarding.maybeAutoOpen({ onDone: afterImport });
+    loadKeywords();
+    if (isOwn()) Onboarding.maybeAutoOpen({ onDone: afterImport, onTaste: loadKeywords });
 }
 
 // 핀을 가져오면 숫자와 미리보기를 새로 불러온다
@@ -135,7 +139,41 @@ function afterImport(inserted) {
     if (inserted) loadPins();
 }
 
-els.importBtn.addEventListener('click', () => Onboarding.open({ onDone: afterImport }));
+els.importBtn.addEventListener('click', () => Onboarding.open({ onDone: afterImport, onTaste: loadKeywords }));
+els.tasteBtn.addEventListener('click', () => Onboarding.open({ startAt: 'taste', onTaste: loadKeywords }));
+
+/** 이 사람 핀에 붙은 키워드(감각 테스트 결과 + 직접 붙인 것)를 많이 쓴 순서로 */
+async function loadKeywords() {
+    const { data, error } = await supabaseClient.from('pins')
+        .select('custom_tags').eq('owner_id', state.profile.id).neq('custom_tags', '{}').limit(5000);
+    const counts = new Map();
+    (error ? [] : data || []).forEach((row) => (row.custom_tags || []).forEach((tag) => {
+        counts.set(tag, (counts.get(tag) || 0) + 1);
+    }));
+    const sorted = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 40);
+
+    els.keywords.replaceChildren();
+    if (!sorted.length) {
+        els.keywordsSection.classList.toggle('hidden', !isOwn());
+        if (isOwn()) {
+            const empty = document.createElement('div');
+            empty.className = 'pf-empty';
+            empty.textContent = '아직 키워드가 없어요. "감각 테스트"로 내 감각을 키워드로 만들어 보세요.';
+            els.keywords.appendChild(empty);
+        }
+        return;
+    }
+    els.keywordsSection.classList.remove('hidden');
+    sorted.forEach(([tag, count]) => {
+        const chip = document.createElement('a');
+        chip.className = 'pf-keyword';
+        chip.href = `${ProfileUI.tunnelUrl(state.profile.username)}&q=${encodeURIComponent(tag)}`;
+        chip.innerHTML = '<span></span><em></em>';
+        chip.querySelector('span').textContent = tag;
+        chip.querySelector('em').textContent = count;
+        els.keywords.appendChild(chip);
+    });
+}
 
 const isOwn = () => !!(state.me && state.profile && state.me.id === state.profile.id);
 
@@ -158,6 +196,7 @@ function renderProfile() {
     els.enterTunnel.href = ProfileUI.tunnelUrl(p.username);
     els.editBtn.classList.toggle('hidden', !isOwn());
     els.importBtn.classList.toggle('hidden', !isOwn());
+    els.tasteBtn.classList.toggle('hidden', !isOwn());
     els.followBtn.classList.toggle('hidden', isOwn());
     renderFollowButton();
 }

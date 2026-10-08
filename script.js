@@ -115,7 +115,6 @@ class ParticleGallery {
         this.setupEventListeners();
         this.loadPinsFromAPI();
         this.openDirectPinIfLinked();
-        this.openSearchFromQueryParam();
         this.maybeShowSearchHint();
     }
 
@@ -378,6 +377,8 @@ class ParticleGallery {
                 this.createParticles();
                 this.playEntranceAnimation();
                 this.animate();
+                // ?q= 검색은 누구의 터널인지 알고 난 뒤에 한다 (먼저 하면 기본 아카이브에서 찾아 버린다)
+                this.openSearchFromQueryParam();
                 this.loadSearchIndex();
             } else {
                 throw new Error('핀 데이터를 가져올 수 없습니다');
@@ -1165,7 +1166,8 @@ class ParticleGallery {
      */
     async loadSearchIndex() {
         try {
-            const index = await (await fetch(`/api/search/index?user=${encodeURIComponent(this.viewingUsername || '')}`)).json();
+            const fresh = this.isViewingOwnTunnel() ? '&fresh=1' : '';
+            const index = await (await fetch(`/api/search/index?user=${encodeURIComponent(this.viewingUsername || '')}${fresh}`)).json();
             if (!index.success || !index.owner) return;
 
             let feel = null;

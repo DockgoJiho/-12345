@@ -564,8 +564,9 @@ app.post('/api/pins/import', async (req, res) => {
             inserted += batch.length;
         }
 
-        // 이 사람 핀 목록을 기억해 둔 게 있으면 버린다 (방금 넣은 핀이 터널/검색에 바로 보이게)
+        // 이 사람 핀 목록을 기억해 둔 게 있으면 버린다 (방금 넣은 핀이 터널/검색/개인 페이지에 바로 보이게)
         ownerPinsCache.delete(userData.user.id);
+        pinsCache.delete(userData.user.id);
         for (const key of searchResultCache.keys()) {
             if (key.startsWith(`${userData.user.id}|`)) searchResultCache.delete(key);
         }
@@ -906,7 +907,15 @@ app.get('/api/search/index', async (req, res) => {
     try {
         const owner = await resolveOwnerCached(req.query.user);
         if (!owner) return res.json({ success: true, owner: null, pins: [] });
-        const rows = (await fetchOwnerPinsCached(owner.id)).filter((pin) => pin.image);
+        // fresh=1: 자기 터널을 볼 때 - 방금 감각 테스트로 붙인 키워드가 바로 검색되도록 기억해 둔 목록을 쓰지 않는다
+        let allRows;
+        if (req.query.fresh === '1') {
+            allRows = await fetchAllPins(owner.id);
+            ownerPinsCache.set(owner.id, { at: Date.now(), value: Promise.resolve(allRows) });
+        } else {
+            allRows = await fetchOwnerPinsCached(owner.id);
+        }
+        const rows = allRows.filter((pin) => pin.image);
         const engine = taste();
         res.json({
             success: true,

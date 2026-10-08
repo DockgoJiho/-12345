@@ -223,6 +223,15 @@
                 const narrowed = ranked.filter(({ d }) => scoreTextMatch(d.doc, textKeywords) !== null);
                 if (narrowed.length) ranked = narrowed;
             }
+            // 그 사람이 감각 테스트로 직접 고른(그 단어를 키워드로 붙인) 핀이 AI 해석보다 먼저다
+            // (주제어만 쓴 검색 "포스터"는 그대로 둔다 - 감각 테스트는 느낌 단어에 대한 것)
+            const ownPicks = feelResult.keywords.length
+                ? docs.filter((d) => keywords.every((kw) => d.doc.tags.some((t) => t.includes(kw))))
+                : [];
+            if (ownPicks.length) {
+                const picked = new Set(ownPicks);
+                ranked = [...ownPicks.map((d) => ({ d, score: Infinity })), ...ranked.filter(({ d }) => !picked.has(d))];
+            }
         } else {
             ranked = [];
             if (textKeywords.length) {
