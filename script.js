@@ -3,8 +3,16 @@
  * 추상적인 입자가 부유하면서 마우스 인터랙션으로 이미지 미리보기 및 확대 표시
  */
 
+// 서버에 물어봐야 할 때(검색 색인을 아직 못 받았거나, 내 감각 테스트 기준으로 검색할 때)는
 // 타이핑을 이만큼 멈추면 검색한다 (그 전에 친 글자마다 요청을 보내지 않게)
 const SEARCH_TYPING_DELAY = 150;
+
+function base64ToBytes(b64) {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+}
 const CARD_TEXTURE_LIMIT = 320;
 
 class ParticleGallery {
@@ -32,6 +40,8 @@ class ParticleGallery {
         this.searchTypingTimer = null;
         this.searchAbort = null;
         this.searchResponseCache = new Map();
+        // 브라우저에서 바로 검색하기 위한 색인 (터널 주인의 핀 전체 + 느낌 점수표). 받기 전엔 서버에 묻는다
+        this.searchLocal = null;
         this.searchPrefetching = new Set();
         this.shownQuery = '';
         this.tunnelQuery = '';
@@ -357,6 +367,7 @@ class ParticleGallery {
                 this.createParticles();
                 this.playEntranceAnimation();
                 this.animate();
+                this.loadSearchIndex();
             } else {
                 throw new Error('핀 데이터를 가져올 수 없습니다');
             }
@@ -1058,6 +1069,60 @@ class ParticleGallery {
         });
     }
 
+    /**
+     * 검색을 브라우저에서 직접 하기 위한 색인을 받는다: 터널 주인의 핀 전체와 핀 × 느낌 키워드 점수표.
+     * 이걸 받은 뒤로는 글자를 칠 때마다 서버에 묻지 않고 search-core.js로 바로 계산한다.
+     */
+    async loadSearchIndex() {
+        try {
+            const index = await (await fetch(`/api/search/index?user=${encodeURIComponent(this.viewingUsername || '')}`)).json();
+            if (!index.success || !index.owner) return;
+
+            let feel = null;
+            if (index.feel) {
+                const table = await (await fetch(`/api/search/feel?basis=${index.feel.basis}&v=${index.feel.version}`)).json();
+                feel = SearchCore.decodeFeelTable(table, base64ToBytes);
+            }
+
+            this.searchDictionaries = index.dictionaries;
+            this.searchVocab = index.vocab;
+            this.searchLocal = {
+                parser: SearchCore.createQueryParser(index.vocab),
+                docs: index.pins.map((pin) => ({ pin, sourcePinId: pin.sourcePinId, doc: SearchCore.toSearchDoc(pin, index.dictionaries) })),
+                feel
+            };
+            this.renderSearchSuggestions();
+            // 색인을 받기 전에 이미 친 검색어가 있으면 바로 다시 계산한다
+            if (this.currentSearchQuery()) {
+                this.shownQuery = '';
+                this.runSearch();
+            }
+        } catch (err) {
+            console.warn('검색 색인을 못 받아서 서버 검색을 씁니다:', err);
+        }
+    }
+
+    /** 내 터널에서 단어 감각 테스트 결과를 기준으로 검색할 때는 점수를 새로 계산해야 해서 서버에 묻는다 */
+    canSearchLocally() {
+        return !!this.searchLocal && !(this.isViewingOwnTunnel() && this.readTasteMarks());
+    }
+
+    /** 메모·키워드를 고치거나 핀을 지우면 브라우저 색인에도 바로 반영한다 (patch가 null이면 삭제) */
+    updateLocalSearchPin(pinId, patch) {
+        if (!this.searchLocal) return;
+        const docs = this.searchLocal.docs;
+        const i = docs.findIndex((d) => d.pin.id === pinId);
+        if (i < 0) return;
+        if (patch === null) {
+            docs.splice(i, 1);
+        } else {
+            const pin = { ...docs[i].pin, ...patch };
+            docs[i] = { pin, sourcePinId: pin.sourcePinId, doc: SearchCore.toSearchDoc(pin, this.searchDictionaries) };
+        }
+        this.shownQuery = '';
+        this.tunnelQuery = '';
+    }
+
     /** 자동완성 단어 목록(느낌 키워드·주제)은 검색창에 처음 들어갈 때 한 번만 받아 둔다 */
     async loadSearchVocab() {
         if (this.searchVocab) return;
@@ -1084,7 +1149,11 @@ class ParticleGallery {
     onSearchTyping() {
         this.renderSearchSuggestions();
         clearTimeout(this.searchTypingTimer);
-        this.searchTypingTimer = setTimeout(() => this.runSearch(), SEARCH_TYPING_DELAY);
+        if (this.canSearchLocally()) {
+            this.runSearch();
+        } else {
+            this.searchTypingTimer = setTimeout(() => this.runSearch(), SEARCH_TYPING_DELAY);
+        }
     }
 
     renderSearchSuggestions() {
@@ -1144,7 +1213,9 @@ class ParticleGallery {
         const requestId = ++this.searchRequestId;
         const cacheKey = this.searchCacheKey(query);
 
-        let data = this.searchResponseCache.get(cacheKey);
+        let data = this.canSearchLocally()
+            ? SearchCore.rankSearch(query, this.searchLocal)
+            : this.searchResponseCache.get(cacheKey);
         if (!data) {
             // 결과를 기다리는 동안 이전 결과는 그대로 두고 흐리게만 한다 (글자마다 목록이 깜빡이지 않게)
             this.searchPanel.classList.add('searching');
@@ -1194,6 +1265,10 @@ class ParticleGallery {
      * 사람이 나머지 글자를 치는 동안 받아 두면, 다 쳤을 때는 기다릴 것 없이 바로 바뀐다.
      */
     async prefetchSearch(query) {
+        if (this.canSearchLocally()) {
+            SearchCore.rankSearch(query, this.searchLocal).pins.slice(0, 30).forEach((pin) => this.loadCardTexture(pin.image));
+            return;
+        }
         const cacheKey = this.searchCacheKey(query);
         if (this.searchResponseCache.has(cacheKey) || this.searchPrefetching.has(cacheKey)) return;
         this.searchPrefetching.add(cacheKey);
@@ -1576,6 +1651,7 @@ class ParticleGallery {
         try {
             const { error } = await supabaseClient.from('pins').delete().eq('id', particle.pinData.id);
             if (error) throw error;
+            this.updateLocalSearchPin(particle.pinData.id, null);
             this.removeParticleFromScene(particle);
         } catch (err) {
             console.error('핀 삭제 실패:', err);
@@ -1870,6 +1946,7 @@ class ParticleGallery {
             this.particles.forEach((p) => {
                 if (p.pinData.id === pinId) p.pinData.customTags = tags.slice();
             });
+            this.updateLocalSearchPin(pinId, { customTags: tags.slice() });
         } catch (err) {
             console.warn('키워드 저장 실패:', err);
         }
@@ -1894,6 +1971,7 @@ class ParticleGallery {
                 this.particles.forEach((p) => {
                     if (p.pinData.id === pinId) p.pinData.memo = memoText;
                 });
+                this.updateLocalSearchPin(pinId, { memo: memoText });
                 statusEl.textContent = '저장됨';
             } catch (err) {
                 statusEl.textContent = '저장 실패';

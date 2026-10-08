@@ -17,6 +17,7 @@ const fs = require('fs');
 const { createClient } = require('@supabase/supabase-js');
 
 const { CATEGORY_TAXONOMY, getCategoryByKey } = require('./categories');
+const SearchCore = require('./search-core');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -339,41 +340,14 @@ const MAIN_COLOR_SYNONYMS = {
  * 글자 검색 점수. 제목/설명/메모/직접 붙인 태그/대범주/색상명을 하나의 haystack으로 합쳐서
  * 모든 키워드를 포함하면 점수를, 하나라도 빠지면 null을 돌려준다.
  */
+const SEARCH_DICTIONARIES = {
+    categories: Object.fromEntries(CATEGORY_TAXONOMY.map((c) => [c.key, [c.key, c.en, c.ko, ...c.synonyms]])),
+    colorTypes: COLOR_TYPE_TERMS,
+    mainColors: MAIN_COLOR_SYNONYMS
+};
+
 function scoreTextMatch(pin, keywords) {
-    const title = (pin.title || '').toLowerCase();
-    const description = (pin.description || '').toLowerCase();
-    const memo = (pin.memo || '').toLowerCase();
-    const tags = Array.isArray(pin.custom_tags) ? pin.custom_tags.map((t) => String(t).toLowerCase()) : [];
-
-    // 대범주/모노크롬-폴리크롬/메인색은 한글·영어 동의어를 전부 haystack에 섞어 넣어서,
-    // "그래픽 아트"와 "Graphic Art"처럼 언어가 달라도 같은 대상으로 매칭되게 한다
-    const categoryEntry = pin.category ? CATEGORY_TAXONOMY.find((c) => c.key === pin.category) : null;
-    const categoryTerms = categoryEntry ? [categoryEntry.key, categoryEntry.en, categoryEntry.ko, ...categoryEntry.synonyms] : [];
-    const colorTypeTerms = pin.color_type ? (COLOR_TYPE_TERMS[pin.color_type] || []) : [];
-    const mainColorTerms = pin.main_color
-        ? (MAIN_COLOR_SYNONYMS[pin.main_color.key] || [pin.main_color.key, pin.main_color.en, pin.main_color.ko])
-        : [];
-
-    const haystack = [
-        title, description, memo, ...tags,
-        ...categoryTerms, ...colorTypeTerms, ...mainColorTerms
-    ].join(' ').toLowerCase();
-
-    // 태그를 하나씩 추가할수록 특정성이 강해지도록, 모든 키워드를 만족해야만 후보에 남긴다
-    if (!keywords.every((kw) => haystack.includes(kw))) return null;
-
-    // 필드별 가중치를 둔 관련도 점수: 직접 붙인 키워드 완전일치 > 대범주/색상 > 제목 > 메모 > 설명
-    let score = 0;
-    keywords.forEach((kw) => {
-        if (tags.includes(kw)) score += 12;
-        else if (tags.some((t) => t.includes(kw))) score += 8;
-        if (categoryTerms.some((t) => t.toLowerCase() === kw)) score += 10;
-        if (colorTypeTerms.includes(kw) || mainColorTerms.some((t) => t.toLowerCase() === kw)) score += 6;
-        if (title.includes(kw)) score += 5;
-        if (memo.includes(kw)) score += 3;
-        if (description.includes(kw)) score += 2;
-    });
-    return score;
+    return SearchCore.scoreTextMatch(SearchCore.toSearchDoc(mapPin(pin), SEARCH_DICTIONARIES), keywords);
 }
 
 /**
@@ -905,6 +879,38 @@ const taste = () => (tasteEngine ??= require('./taste/engine'));
 
 app.get('/api/taste/test', (req, res) => {
     res.json({ success: true, keywords: taste().testQuestions() });
+});
+
+/**
+ * 브라우저에서 직접 검색하기 위한 재료: 터널 주인의 핀 전체(검색에 필요한 필드만)와 글자 검색 사전.
+ * 브라우저는 이걸 한 번 받아 두고 타이핑할 때마다 search-core.js로 바로 계산한다.
+ * feel: 느낌 검색에 쓸 점수표 기준 - 기본 아카이브 주인은 직접 붙인 라벨, 다른 사람은 AI 기본 해석.
+ */
+app.get('/api/search/index', async (req, res) => {
+    try {
+        const owner = await resolveOwnerCached(req.query.user);
+        if (!owner) return res.json({ success: true, owner: null, pins: [] });
+        const rows = (await fetchOwnerPinsCached(owner.id)).filter((pin) => pin.image);
+        const engine = taste();
+        res.json({
+            success: true,
+            owner: { id: owner.id, username: owner.username },
+            feel: { basis: owner.username === DEFAULT_ARCHIVE_USERNAME ? 'owner' : 'ai', version: engine.DATA_VERSION },
+            dictionaries: SEARCH_DICTIONARIES,
+            vocab: engine.vocabulary(),
+            pins: rows.map((row) => ({ ...mapPin(row), sourcePinId: row.source_pin_id || null }))
+        });
+    } catch (error) {
+        console.error('검색 색인 실패:', error.message);
+        res.status(500).json({ error: '검색 색인을 불러오지 못했습니다' });
+    }
+});
+
+// 핀 × 느낌 키워드 점수표. 주소에 데이터 버전(v)이 붙으므로 브라우저가 오래 캐시해도 된다
+app.get('/api/search/feel', (req, res) => {
+    const basis = req.query.basis === 'owner' ? 'owner' : 'ai';
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.json({ success: true, ...taste().feelTable(basis) });
 });
 
 // 검색창 자동완성용 단어 목록 (느낌 키워드 + 주제). 타이핑하는 즉시 브라우저에서 바로 맞춰 보여준다

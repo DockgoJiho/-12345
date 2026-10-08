@@ -11,6 +11,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const SearchCore = require('../search-core');
 
 const DATA = path.join(__dirname, 'data');
 const MODELS = ['clip', 'siglip2'];
@@ -126,61 +127,8 @@ function scoreKeyword(keywordId, marks = {}) {
 
 // ── 검색어 해석 ───────────────────────────────────────────────
 
-const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const WORD_START = '(^|[^\\p{L}\\p{N}])';
-
-// 주제어 뒤에 붙을 수 있는 조사 ("옷이", "사람들을", "포스터인데") - "옷장"처럼 다른 낱말이 되는 건 제외
-const PARTICLE = '(?:들)?(?:이랑|인데|이고|이나|에서|으로|처럼|이|가|을|를|은|는|의|도|만|랑|과|와|에|로)?';
-// "사람 없는", "옷 빼고", "음식 사진 말고"
-const NEGATION = '(?:\\s*(?:사진|이미지|그림))?\\s*(?:이?\\s*없는|없이|빼고|제외|말고|아닌)';
-// 키워드가 아닌 연결어/군더더기 - 모르는 말로 취급하지 않는다
-const FILLER = new Set(['느낌', '느낌의', '같은', '같이', '하고', '이고', '인데', '그리고', '그런', '이런', '좀', '약간', '조금', '많이', '아주', '너무', '엄청', '되게', '사진', '이미지', '레퍼런스', '스타일', '분위기', '분위기의', '많은', '있는', '없는', '위주', '위주로', '들어간', '나오는', '느낌으로']);
-
-const subjectEntries = SUBJECTS.flatMap((s) => s.synonyms.map((syn) => [syn.toLowerCase(), s.id]))
-    .sort((a, b) => b[0].length - a[0].length);
-// 같은 표현이 키워드 여러 개에 연결될 수 있다
-const keywordEntries = (() => {
-    const idsOf = new Map();
-    KEYWORDS.forEach((k) => k.synonyms.forEach((s) => {
-        const key = s.toLowerCase();
-        idsOf.set(key, [...(idsOf.get(key) ?? []), k.id]);
-    }));
-    return [...idsOf].sort((a, b) => b[0].length - a[0].length);
-})();
-
-/** "옷" → include, "사람 없는" / "옷 빼고" → exclude. 찾은 주제어는 지워서 rest로 돌려준다 */
-function parseSubjects(text) {
-    let rest = text.toLowerCase();
-    const include = [], exclude = [];
-    for (const [syn, id] of subjectEntries) {
-        const word = `${WORD_START}${escape(syn)}`;
-        const negated = new RegExp(`${word}${PARTICLE}${NEGATION}`, 'u');
-        const plain = new RegExp(`${word}${PARTICLE}(?=$|[^\\p{L}\\p{N}])`, 'u');
-        if (negated.test(rest)) {
-            if (!exclude.includes(id)) exclude.push(id);
-            rest = rest.replace(new RegExp(negated.source, 'gu'), '$1 ');
-        } else if (plain.test(rest)) {
-            if (!include.includes(id)) include.push(id);
-            rest = rest.replace(new RegExp(plain.source, 'gu'), '$1 ');
-        }
-    }
-    return { include, exclude, rest };
-}
-
-/** 느낌 키워드 찾기. 단어 첫머리에서 시작하는 경우만 인정한다 ("감정적인"의 '정적'은 무시) */
-function parseKeywords(text) {
-    let rest = text.toLowerCase();
-    const ids = [];
-    for (const [syn, synIds] of keywordEntries) {
-        const at = new RegExp(`${WORD_START}${escape(syn)}[\\p{L}\\p{N}]*`, 'u');
-        if (at.test(rest)) {
-            synIds.forEach((id) => { if (!ids.includes(id)) ids.push(id); });
-            rest = rest.replace(new RegExp(at.source, 'gu'), '$1 ');
-        }
-    }
-    const unknown = rest.split(/[\s,./·+&]+/).filter((t) => t.length >= 2 && !FILLER.has(t));
-    return { ids, unknown };
-}
+// 검색어 해석은 브라우저와 같은 코드를 쓴다 (search-core.js)
+const { parseSubjects, parseKeywords } = SearchCore.createQueryParser({ keywords: KEYWORDS, subjects: SUBJECTS });
 
 // 아카이브 주인의 기준은 바뀌지 않으므로 키워드별 점수를 한 번만 계산해 둔다
 const ownerScoreCache = new Map();
@@ -188,6 +136,13 @@ const ownerScore = (id) => {
     if (!ownerScoreCache.has(id)) ownerScoreCache.set(id, scoreKeyword(id, ownerLabels[id]));
     return ownerScoreCache.get(id);
 };
+// 라벨이 없는 사람(다른 사용자)은 AI 기본 해석 그대로 - 이것도 바뀌지 않으므로 한 번만 계산한다
+const aiScoreCache = new Map();
+const aiScore = (id) => {
+    if (!aiScoreCache.has(id)) aiScoreCache.set(id, scoreKeyword(id, {}));
+    return aiScoreCache.get(id);
+};
+const hasLabels = (labels) => !!labels && Object.keys(labels).length > 0;
 
 // 이미지 분석이 안 된 핀(임베딩에 없는 핀)은 어떤 주제도 없는 것으로 본다
 const hasSubject = (subjectId, pin) => (subjectScores[subjectId][pin] ?? 0) >= SUBJECTS.find((s) => s.id === subjectId).threshold;
@@ -214,7 +169,10 @@ function search(query, { excludeToggles = [], marks = null, limit = 60, candidat
 
     let pins = [];
     if (ids.length) {
-        const perKeyword = ids.map((id) => (marks ? scoreKeyword(id, criteria[id]) : ownerScore(id)));
+        const perKeyword = ids.map((id) => {
+            if (!marks) return ownerScore(id);
+            return hasLabels(criteria[id]) ? scoreKeyword(id, criteria[id]) : aiScore(id);
+        });
         pins = uniqueIds.filter(allowed)
             .map((id) => { const each = perKeyword.map((m) => m.get(id)); return { id, score: Math.min(...each), each }; })
             .sort((a, b) => b.score - a.score)
@@ -302,16 +260,70 @@ const vocabulary = () => ({
     subjects: SUBJECTS.map((s) => ({ id: s.id, ko: s.ko, synonyms: s.synonyms }))
 });
 
-/** 아카이브 주인 기준 키워드 점수를 하나씩 미리 계산한다 (한 번에 다 하면 그동안 서버가 다른 요청을 못 받는다) */
+/**
+ * 브라우저가 받아 가서 직접 검색하는 "핀 × 느낌 키워드 점수표".
+ * basis: 'owner' (기본 아카이브 주인의 라벨 기준) | 'ai' (AI 기본 해석 - 다른 사용자)
+ * 점수는 z점수×1000(Int16), 주제 확률은 ×65535(Uint16)로 줄여서 base64로 보낸다.
+ */
+const feelTableCache = new Map();
+const toBase64 = (typed) => Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength).toString('base64');
+function feelTable(basis) {
+    if (feelTableCache.has(basis)) return feelTableCache.get(basis);
+    const ids = indexes.siglip2.ids;
+    const scoreOf = basis === 'owner' ? ownerScore : aiScore;
+    const scores = {};
+    KEYWORDS.forEach((k) => {
+        const byPin = scoreOf(k.id);
+        scores[k.id] = toBase64(Int16Array.from(ids, (id) => Math.max(-32767, Math.min(32767, Math.round((byPin.get(id) ?? -30) * 1000)))));
+    });
+    const subjects = {}, thresholds = {};
+    SUBJECTS.forEach((sub) => {
+        subjects[sub.id] = toBase64(Uint16Array.from(ids, (id) => Math.round(Math.min(Math.max(subjectScores[sub.id][id] ?? 0, 0), 1) * 65535)));
+        thresholds[sub.id] = sub.threshold;
+    });
+    // 그 사람이 이 키워드에 직접 '아니야'라고 한 사진은 결과에서 뺀다
+    const rejected = {};
+    if (basis === 'owner') {
+        Object.entries(ownerLabels).forEach(([k, labels]) => {
+            const no = Object.entries(labels).filter(([, v]) => v === NO).map(([pin]) => pin);
+            if (no.length) rejected[k] = no;
+        });
+    }
+    const uniqueRowSet = new Set(uniqueIds);
+    const table = {
+        version: DATA_VERSION,
+        ids,
+        unique: ids.map((id, i) => (uniqueRowSet.has(id) ? i : -1)).filter((i) => i >= 0),
+        labels: {
+            keywords: Object.fromEntries(KEYWORDS.map((k) => [k.id, k.ko])),
+            subjects: Object.fromEntries(SUBJECTS.map((sub) => [sub.id, sub.ko]))
+        },
+        scores,
+        subjects,
+        thresholds,
+        rejected
+    };
+    feelTableCache.set(basis, table);
+    return table;
+}
+
+// 데이터를 다시 내보내면(export-taste.mjs) 바뀌는 값 - 브라우저가 옛 점수표를 캐시에서 계속 쓰지 않게 주소에 붙인다
+const DATA_VERSION = String(Math.max(...fs.readdirSync(DATA).map((f) => fs.statSync(path.join(DATA, f)).mtimeMs)) | 0);
+
+/**
+ * 키워드 점수와 점수표를 조금씩 나눠 미리 계산한다 (한 번에 다 하면 그동안 서버가 다른 요청을 못 받는다).
+ * 무료 서버에서 처음 계산하면 키워드 하나에 수십~수백 ms라, 사람이 오기 전에 끝내 둔다.
+ */
 function warmUp() {
-    const pending = KEYWORDS.map((k) => k.id);
+    const pending = KEYWORDS.flatMap((k) => [() => ownerScore(k.id), () => aiScore(k.id)]);
+    pending.push(() => feelTable('owner'), () => feelTable('ai'));
     const next = () => {
-        const id = pending.shift();
-        if (!id) return;
-        ownerScore(id);
-        setTimeout(next, 20);
+        const job = pending.shift();
+        if (!job) return;
+        job();
+        setTimeout(next, 30);
     };
     setTimeout(next, 1000);
 }
 
-module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest, vocabulary, warmUp };
+module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest, vocabulary, warmUp, feelTable, DATA_VERSION };
