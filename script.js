@@ -446,16 +446,35 @@ class ParticleGallery {
         this.container.appendChild(errorEl);
     }
 
-    showEmptyTunnelMessage(text = '아직 저장된 핀이 없습니다.') {
+    showEmptyTunnelMessage(text = '아직 저장된 핀이 없습니다.', action = null) {
         // 검색으로 터널을 여러 번 다시 채우다 보면 같은 메시지가 중복 생성될 수 있어 먼저 정리한다
         const existing = document.getElementById('empty-tunnel-indicator');
         if (existing) existing.remove();
 
         const emptyEl = document.createElement('div');
-        emptyEl.className = 'loading';
+        emptyEl.className = 'loading empty-tunnel';
         emptyEl.textContent = text;
         emptyEl.id = 'empty-tunnel-indicator';
+        if (action) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'empty-tunnel-btn';
+            button.textContent = action.label;
+            button.addEventListener('click', (e) => { e.stopPropagation(); action.onClick(); });
+            emptyEl.appendChild(button);
+        }
         this.container.appendChild(emptyEl);
+    }
+
+    /** 내 터널인데 핀이 하나도 없을 때: 핀 가져오기 안내를 띄운다 (가져오면 터널을 다시 불러온다) */
+    offerPinImport() {
+        if (typeof Onboarding === 'undefined') return;
+        const onDone = (inserted) => { if (inserted) setTimeout(() => window.location.reload(), 1200); };
+        this.showEmptyTunnelMessage('아직 가져온 핀이 없어요.', {
+            label: '내 Pinterest 핀 가져오기 →',
+            onClick: () => Onboarding.open({ onDone })
+        });
+        Onboarding.maybeAutoOpen({ onDone });
     }
 
     hideEmptyTunnelMessage() {
@@ -468,10 +487,12 @@ class ParticleGallery {
         // 기본 아카이브가 설정 안 된 경우 pinsData가 비어 있을 수 있다 - 카드를 0개로
         // 나눠 배치하려 하면(index % 0) 바로 아래에서 에러가 나므로 여기서 막는다.
         if (!this.pinsData || this.pinsData.length === 0) {
-            const message = this.searchTags && this.searchTags.length > 0
-                ? '일치하는 핀이 없습니다.'
-                : '아직 저장된 핀이 없습니다.';
-            this.showEmptyTunnelMessage(message);
+            const searching = this.searchTags && this.searchTags.length > 0;
+            if (!searching && this.isViewingOwnTunnel()) {
+                this.offerPinImport();
+            } else {
+                this.showEmptyTunnelMessage(searching ? '일치하는 핀이 없습니다.' : '아직 저장된 핀이 없습니다.');
+            }
             return;
         }
         this.hideEmptyTunnelMessage();
@@ -727,15 +748,20 @@ class ParticleGallery {
      * 받아야 해서 원본을 쓰면 다 바뀌는 데 몇 초씩 걸린다. 썸네일이 없는 이미지는 원본으로 대신한다.
      */
     thumbUrl(image) {
-        return image.startsWith('/images/') && !image.startsWith('/images/t/')
-            ? image.replace(/^\/images\/([^/]+)\.[^.]+$/, '/images/t/$1.webp')
-            : null;
+        if (image.startsWith('/images/') && !image.startsWith('/images/t/')) {
+            return image.replace(/^\/images\/([^/]+)\.[^.]+$/, '/images/t/$1.webp');
+        }
+        // 내보내기로 가져온 핀은 Pinterest 이미지를 쓴다 - 같은 이미지의 작은 크기(236px)가 있다
+        if (/^https:\/\/i\.pinimg\.com\/(736x|originals)\//.test(image)) {
+            return image.replace(/^https:\/\/i\.pinimg\.com\/(736x|originals)\//, 'https://i.pinimg.com/236x/');
+        }
+        return null;
     }
 
     loadCardImage(image, onLoad, onError) {
         const thumb = this.thumbUrl(image);
         const loadOriginal = () => this.textureLoader.load(this.cardImageUrl(image), onLoad, undefined, onError);
-        if (thumb && thumb !== image) this.textureLoader.load(thumb, onLoad, undefined, loadOriginal);
+        if (thumb && thumb !== image) this.textureLoader.load(this.cardImageUrl(thumb), onLoad, undefined, loadOriginal);
         else loadOriginal();
     }
 

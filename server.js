@@ -28,7 +28,8 @@ app.set('trust proxy', 1);
 
 // 미들웨어
 app.use(cors());
-app.use(express.json());
+// 핀 가져오기(/api/pins/import)는 한 번에 수백 개씩 보내므로 기본 한도(100KB)보다 넉넉히 받는다
+app.use(express.json({ limit: '5mb' }));
 
 // express.static이 프로젝트 루트를 통째로 서빙하다 보니, 프론트엔드가 아닌 서버 전용
 // 파일들(server.js 자체, 1회용 마이그레이션 스크립트, package.json, 마이그레이션 이전
@@ -525,7 +526,12 @@ app.post('/api/pins/import', async (req, res) => {
             return res.status(400).json({ error: '가져올 핀 데이터가 없습니다' });
         }
 
+        // 같은 내보내기를 다시 올려도 이미 있는 핀(같은 Pinterest 핀 id)은 다시 넣지 않는다
+        const existing = new Set((await fetchAllPins(userData.user.id, 'source_pin_id'))
+            .map((row) => row.source_pin_id).filter(Boolean));
+
         const rows = incomingPins
+            .filter((pin) => !(pin.id && existing.has(String(pin.id))))
             .map((pin) => ({
                 owner_id: userData.user.id,
                 source_pin_id: pin.id ? String(pin.id) : null,
@@ -546,7 +552,7 @@ app.post('/api/pins/import', async (req, res) => {
             .filter((row) => !!row.image);
 
         if (rows.length === 0) {
-            return res.status(400).json({ error: '이미지가 있는 핀이 없습니다' });
+            return res.json({ success: true, inserted: 0, skipped: incomingPins.length });
         }
 
         const BATCH_SIZE = 500;
@@ -558,7 +564,13 @@ app.post('/api/pins/import', async (req, res) => {
             inserted += batch.length;
         }
 
-        res.json({ success: true, inserted });
+        // 이 사람 핀 목록을 기억해 둔 게 있으면 버린다 (방금 넣은 핀이 터널/검색에 바로 보이게)
+        ownerPinsCache.delete(userData.user.id);
+        for (const key of searchResultCache.keys()) {
+            if (key.startsWith(`${userData.user.id}|`)) searchResultCache.delete(key);
+        }
+
+        res.json({ success: true, inserted, skipped: incomingPins.length - inserted });
     } catch (error) {
         console.error('핀 가져오기 실패:', error.message);
         res.status(500).json({ error: '핀 가져오기에 실패했습니다' });
@@ -861,7 +873,8 @@ app.get('/api/image', async (req, res) => {
         // 이미지 타입 감지 및 캐시 헤더 설정
         const contentType = imageResponse.headers['content-type'] || 'image/jpeg';
         res.setHeader('Content-Type', contentType);
-        res.setHeader('Cache-Control', 'public, max-age=86400'); // 24시간 캐시
+        // Pinterest 이미지 주소는 내용이 바뀌지 않는다 - 한 번 받으면 다시 받지 않게
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         res.setHeader('Access-Control-Allow-Origin', '*');
 
         res.send(imageResponse.data);

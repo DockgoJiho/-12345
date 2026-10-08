@@ -24,6 +24,7 @@ const els = {
     enterTunnel: $('pf-enter-tunnel'),
     followBtn: $('pf-follow-btn'),
     editBtn: $('pf-edit-btn'),
+    importBtn: $('pf-import-btn'),
     myPage: $('pf-my-page'),
     pinsSection: $('pf-pins-section'),
     pins: $('pf-pins'),
@@ -66,9 +67,16 @@ function linkLabel(url) {
     }
 }
 
-const thumbUrl = (image) => (image.startsWith('/images/') && !image.startsWith('/images/t/')
-    ? image.replace(/^\/images\/([^/]+)\.[^.]+$/, '/images/t/$1.webp')
-    : null);
+// 작은 미리보기: 내 서버에 있는 이미지는 images/t/ 썸네일, 내보내기로 가져온 Pinterest 이미지는 236px 크기
+function thumbUrl(image) {
+    if (image.startsWith('/images/') && !image.startsWith('/images/t/')) {
+        return image.replace(/^\/images\/([^/]+)\.[^.]+$/, '/images/t/$1.webp');
+    }
+    if (/^https:\/\/i\.pinimg\.com\/(736x|originals)\//.test(image)) {
+        return image.replace(/^https:\/\/i\.pinimg\.com\/(736x|originals)\//, 'https://i.pinimg.com/236x/');
+    }
+    return null;
+}
 
 // ── 불러오기 ──────────────────────────────────────────────
 
@@ -119,7 +127,15 @@ async function init() {
 
     loadCounts();
     loadPins();
+    if (isOwn()) Onboarding.maybeAutoOpen({ onDone: afterImport });
 }
+
+// 핀을 가져오면 숫자와 미리보기를 새로 불러온다
+function afterImport(inserted) {
+    if (inserted) loadPins();
+}
+
+els.importBtn.addEventListener('click', () => Onboarding.open({ onDone: afterImport }));
 
 const isOwn = () => !!(state.me && state.profile && state.me.id === state.profile.id);
 
@@ -141,6 +157,7 @@ function renderProfile() {
 
     els.enterTunnel.href = ProfileUI.tunnelUrl(p.username);
     els.editBtn.classList.toggle('hidden', !isOwn());
+    els.importBtn.classList.toggle('hidden', !isOwn());
     els.followBtn.classList.toggle('hidden', isOwn());
     renderFollowButton();
 }
@@ -177,7 +194,7 @@ function renderPins(pins) {
     if (!pins.length) {
         const empty = document.createElement('div');
         empty.className = 'pf-empty';
-        empty.textContent = isOwn() ? '아직 저장된 핀이 없습니다. 핀을 가져오면 여기에 보여요.' : '아직 저장된 핀이 없습니다.';
+        empty.textContent = isOwn() ? '아직 가져온 핀이 없어요. 위의 "핀 가져오기"를 눌러 Pinterest 핀을 가져오세요.' : '아직 저장된 핀이 없습니다.';
         els.pins.appendChild(empty);
         return;
     }
@@ -191,7 +208,7 @@ function renderPins(pins) {
         img.loading = 'lazy';
         img.alt = pin.title && pin.title !== '제목 없음' ? pin.title : '';
         const small = thumbUrl(pin.image);
-        img.src = small || (pin.image.startsWith('/') ? pin.image : `/api/image?url=${encodeURIComponent(pin.image)}`);
+        img.src = small || pin.image;
         if (small) img.onerror = () => { img.onerror = null; img.src = pin.image; };
         a.appendChild(img);
         els.pins.appendChild(a);

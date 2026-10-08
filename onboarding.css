@@ -1,0 +1,378 @@
+/* 처음 온 사람용 "내 핀 가져오기" 안내 (onboarding.js) - 메인/개인 페이지/터널 공통 */
+.ob-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 300;
+    background: rgba(20, 20, 20, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', 'Courier New', monospace;
+    color: #1a1a1a;
+    animation: ob-fade 0.25s ease-out;
+}
+
+.ob-overlay.hidden {
+    display: none;
+}
+
+@keyframes ob-fade {
+    from { opacity: 0; }
+}
+
+.ob-card {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    background: #fff;
+    border-radius: 18px;
+    padding: 28px 28px 22px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+
+.ob-close {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    background: none;
+    border: none;
+    font-size: 22px;
+    color: #aaa;
+    cursor: pointer;
+}
+
+.ob-progress {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 22px;
+    padding-right: 28px;
+}
+
+.ob-progress span {
+    flex: 1;
+    height: 3px;
+    border-radius: 2px;
+    background: #eee;
+    transition: background 0.3s ease;
+}
+
+.ob-progress span.on {
+    background: #3a3ef2;
+}
+
+.ob-step {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.ob-step.active {
+    display: flex;
+    animation: ob-slide 0.3s ease-out;
+}
+
+@keyframes ob-slide {
+    from { opacity: 0; transform: translateX(14px); }
+}
+
+.ob-kicker {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: #3a3ef2;
+}
+
+.ob-title {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.35;
+}
+
+.ob-text {
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.ob-muted {
+    color: #888;
+    font-size: 12px;
+}
+
+.ob-list {
+    font-size: 12.5px;
+    line-height: 1.7;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ob-list b {
+    color: #000;
+}
+
+/* 작은 터널 그림 (로딩 화면과 같은 움직임) */
+.ob-visual-tunnel {
+    position: relative;
+    height: 130px;
+    border-radius: 12px;
+    background: #f7f5f1;
+    overflow: hidden;
+}
+
+.ob-ring {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    animation: ob-fly 2000ms cubic-bezier(0.55, 0, 0.9, 0.4) infinite;
+}
+
+.ob-ring i {
+    position: absolute;
+    left: -6px;
+    top: -8px;
+    width: 12px;
+    height: 16px;
+    border-radius: 2px;
+    background: #d3cfc8;
+}
+
+.ob-ring i:nth-child(3n) {
+    background: #3a3ef2;
+    opacity: 0.6;
+}
+
+@keyframes ob-fly {
+    0% { transform: scale(0.05); opacity: 0; }
+    30% { opacity: 1; }
+    100% { transform: scale(3); opacity: 0.8; }
+}
+
+/* Pinterest 설정 경로 */
+.ob-path {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    padding: 12px 14px;
+    background: #f6f6f6;
+    border-radius: 10px;
+}
+
+.ob-path b {
+    color: #bbb;
+    font-weight: 400;
+}
+
+.ob-path-hit {
+    background: #e60023;
+    color: #fff;
+    border-radius: 12px;
+    padding: 3px 10px;
+    font-weight: 700;
+}
+
+/* 메일 모양 */
+.ob-mail {
+    border: 1px solid #eee;
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: #fafafa;
+}
+
+.ob-mail-from {
+    font-size: 11px;
+    color: #e60023;
+    font-weight: 700;
+}
+
+.ob-mail-subject {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.ob-mail-button {
+    align-self: flex-start;
+    margin-top: 6px;
+    background: #e60023;
+    color: #fff;
+    border-radius: 14px;
+    padding: 5px 14px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+/* 파일 올리는 곳 */
+.ob-drop {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    text-align: center;
+    padding: 26px 16px;
+    border: 2px dashed #d6d6d6;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.ob-drop:hover,
+.ob-drop.over {
+    border-color: #3a3ef2;
+    background: #f5f5ff;
+}
+
+.ob-drop-icon {
+    font-size: 26px;
+    color: #3a3ef2;
+}
+
+.ob-drop-text {
+    font-size: 12.5px;
+}
+
+.ob-drop-hint {
+    font-size: 11px;
+    color: #999;
+    line-height: 1.5;
+}
+
+.ob-found {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.ob-found.hidden,
+.ob-bar.hidden {
+    display: none;
+}
+
+.ob-found-count {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.ob-found-preview {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+}
+
+.ob-found-preview img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 6px;
+    background: #eee;
+}
+
+.ob-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: #eee;
+    overflow: hidden;
+}
+
+.ob-bar span {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: #3a3ef2;
+    transition: width 0.3s ease;
+}
+
+.ob-status {
+    font-size: 12px;
+    color: #666;
+    min-height: 16px;
+    line-height: 1.5;
+}
+
+.ob-status.error {
+    color: #ff4433;
+}
+
+.ob-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.ob-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 20px;
+    padding: 10px 16px;
+    font-family: inherit;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.ob-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.ob-btn-primary {
+    background: #111;
+    color: #fff;
+}
+
+.ob-btn-primary:not(:disabled):hover {
+    background: #333;
+}
+
+.ob-btn-ghost {
+    background: none;
+    color: #777;
+}
+
+.ob-btn-ghost:hover {
+    color: #111;
+}
+
+.ob-btn-outline {
+    background: #fff;
+    border-color: #ddd;
+    color: #111;
+}
+
+.ob-btn-outline:hover {
+    background: #f4f4f4;
+}
+
+.ob-btn-wide {
+    width: 100%;
+}
+
+@media (max-width: 480px) {
+    .ob-card {
+        padding: 22px 18px 18px;
+    }
+    .ob-actions .ob-btn {
+        flex: 1 1 auto;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ob-ring {
+        animation-duration: 8000ms;
+    }
+}

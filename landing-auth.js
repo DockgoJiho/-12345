@@ -189,6 +189,8 @@ async function refreshAuthUI(session) {
             usernameSetupModal.classList.remove('hidden');
         } else {
             usernameSetupModal.classList.add('hidden');
+            // 핀이 하나도 없으면 "내 핀 가져오기" 안내를 띄운다
+            Onboarding.maybeAutoOpen();
         }
     } else {
         currentUserId = null;

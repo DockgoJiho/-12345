@@ -6,6 +6,7 @@
     <title>Profile · Pinterest Archive</title>
     <link rel="stylesheet" href="profile-ui.css">
     <link rel="stylesheet" href="profile.css">
+    <link rel="stylesheet" href="onboarding.css">
 </head>
 <body>
     <nav class="pf-nav">
@@ -38,6 +39,7 @@
                     <a class="pf-btn pf-btn-primary" id="pf-enter-tunnel" href="#">ENTER TUNNEL →</a>
                     <button type="button" class="pf-btn hidden" id="pf-follow-btn">FOLLOW</button>
                     <button type="button" class="pf-btn hidden" id="pf-edit-btn">EDIT PROFILE</button>
+                    <button type="button" class="pf-btn hidden" id="pf-import-btn">핀 가져오기</button>
                 </div>
             </div>
         </section>
@@ -95,6 +97,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.116.0/dist/umd/supabase.min.js"></script>
     <script src="supabase-client.js"></script>
     <script src="profile-ui.js"></script>
+    <script src="pinterest-export.js"></script>
+    <script src="onboarding.js"></script>
     <script src="profile.js"></script>
 </body>
 </html>
