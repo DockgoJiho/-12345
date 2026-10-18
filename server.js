@@ -195,6 +195,15 @@ function cached(cache, key, load) {
     return hit.value;
 }
 
+/** 이 사람 핀 목록을 기억해 둔 게 있으면 버린다 (방금 넣은 핀이 터널/검색/개인 페이지에 바로 보이게) */
+function clearOwnerCaches(ownerId) {
+    ownerPinsCache.delete(ownerId);
+    pinsCache.delete(ownerId);
+    for (const key of searchResultCache.keys()) {
+        if (key.startsWith(`${ownerId}|`)) searchResultCache.delete(key);
+    }
+}
+
 const resolveOwnerCached = (username) => cached(ownerCache, username || '', () => resolveOwner(username));
 const fetchOwnerPinsCached = (ownerId) => cached(ownerPinsCache, ownerId, () => fetchAllPins(ownerId));
 
@@ -565,12 +574,7 @@ app.post('/api/pins/import', async (req, res) => {
             inserted += batch.length;
         }
 
-        // 이 사람 핀 목록을 기억해 둔 게 있으면 버린다 (방금 넣은 핀이 터널/검색/개인 페이지에 바로 보이게)
-        ownerPinsCache.delete(userData.user.id);
-        pinsCache.delete(userData.user.id);
-        for (const key of searchResultCache.keys()) {
-            if (key.startsWith(`${userData.user.id}|`)) searchResultCache.delete(key);
-        }
+        clearOwnerCaches(userData.user.id);
 
         res.json({ success: true, inserted, skipped: incomingPins.length - inserted });
     } catch (error) {
@@ -745,7 +749,11 @@ async function refreshPinterestTokenIfNeeded(connection) {
  * 핀은 우선 분류 없이 저장되고(검색 자체는 제목/설명/키워드 기준으로 계속 동작한다) 이후
  * 별도 기능으로 보완할 수 있다.
  */
+// 자동 동기화가 여러 페이지에서 겹쳐 불려도 한 사람당 한 번만 돈다 (진행 중이면 바로 busy로 답한다)
+const pinterestSyncInFlight = new Set();
+
 app.post('/api/pinterest/sync', async (req, res) => {
+    let syncUserId = null;
     try {
         const authHeader = req.headers.authorization || '';
         if (!authHeader.startsWith('Bearer ')) {
@@ -757,6 +765,11 @@ app.post('/api/pinterest/sync', async (req, res) => {
         if (userError || !userData.user) {
             return res.status(401).json({ error: '유효하지 않은 로그인입니다' });
         }
+        if (pinterestSyncInFlight.has(userData.user.id)) {
+            return res.json({ success: true, busy: true, fetched: 0, inserted: 0, skipped: 0 });
+        }
+        syncUserId = userData.user.id;
+        pinterestSyncInFlight.add(syncUserId);
 
         const { data: connection, error: connError } = await supabaseUser
             .from('pinterest_connections')
@@ -816,13 +829,20 @@ app.post('/api/pinterest/sync', async (req, res) => {
             } while (pinsBookmark);
         }
 
-        // 3. 이미 가져온 핀은 건너뛴다
-        const { data: existingRows } = await supabaseUser
-            .from('pins')
-            .select('source_pin_id')
-            .eq('owner_id', userData.user.id)
-            .not('source_pin_id', 'is', null);
-        const existingIds = new Set((existingRows || []).map((r) => r.source_pin_id));
+        // 3. 이미 가져온 핀은 건너뛴다 (Supabase는 한 번에 1,000개까지만 돌려주므로 끝까지 나눠 읽는다 -
+        //    한 번만 읽으면 핀이 1,000개 넘는 사람은 동기화할 때마다 이미 있는 핀이 중복으로 들어갔다)
+        const existingIds = new Set();
+        for (let from = 0; ; from += 1000) {
+            const { data: page, error: pageError } = await supabaseUser
+                .from('pins')
+                .select('source_pin_id')
+                .eq('owner_id', userData.user.id)
+                .not('source_pin_id', 'is', null)
+                .range(from, from + 999);
+            if (pageError) throw pageError;
+            (page || []).forEach((r) => existingIds.add(r.source_pin_id));
+            if (!page || page.length < 1000) break;
+        }
 
         const newRows = fetchedPins
             .filter((p) => p.image && !existingIds.has(p.source_pin_id))
@@ -837,10 +857,13 @@ app.post('/api/pinterest/sync', async (req, res) => {
             inserted += batch.length;
         }
 
+        if (inserted) clearOwnerCaches(userData.user.id);
         res.json({ success: true, fetched: fetchedPins.length, inserted, skipped: fetchedPins.length - newRows.length });
     } catch (error) {
         console.error('Pinterest 동기화 실패:', error.response?.data || error.message);
         res.status(500).json({ error: 'Pinterest 동기화에 실패했습니다' });
+    } finally {
+        if (syncUserId) pinterestSyncInFlight.delete(syncUserId);
     }
 });
 

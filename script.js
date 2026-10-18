@@ -972,6 +972,11 @@ class ParticleGallery {
     }
 
     setupEventListeners() {
+        // 내 터널을 보는 중에 Pinterest 자동 동기화로 새 핀이 들어오거나 분석이 끝나면, 검색 색인을 새로 받는다
+        // (pinterest-autosync.js) - 새 핀이 검색되고, 새로 분석된 핀에도 내 감각이 적용되도록
+        const refreshOwnIndex = () => { if (this.isViewingOwnTunnel()) this.loadSearchIndex(); };
+        window.addEventListener('pinterest-synced', refreshOwnIndex);
+        window.addEventListener('pins-analyzed', refreshOwnIndex);
         window.addEventListener('mousemove', (e) => this.onMouseMove(e));
         window.addEventListener('click', (e) => this.onClick(e));
         window.addEventListener('resize', () => this.onWindowResize());
