@@ -24,11 +24,14 @@ const Onboarding = (() => {
     const ROUND_SIZE = 12;
     const MAX_WORDS = 5;
     const SUGGESTION_COUNT = 14;
+    // 그중 항상 보여줄 단어 수 (테스트 추천 순서의 맨 앞)
+    const FIXED_SUGGESTIONS = 8;
     // 다시 할 때 이미 그 단어로 고른 핀을 몇 장까지 다시 보여줄지 (빼면 그 단어가 지워진다 - 감각이 바뀐 것)
     const RECHECK_PER_WORD = 4;
 
     const taste = {
         vocab: [],          // 추천 단어 (느낌 키워드 이름들)
+        testOrder: [],      // 물어볼 가치가 큰 순서 (사람마다 판단이 갈리는 단어가 앞)
         suggestions: [],
         words: [],          // 고른 단어
         pins: [],           // 내 핀 { id, image, customTags }
@@ -391,6 +394,7 @@ const Onboarding = (() => {
             if (!taste.vocab.length) {
                 const data = await (await fetch('/api/search/vocab')).json();
                 taste.vocab = (data.keywords || []).map((k) => k.ko);
+                taste.testOrder = data.testOrder || [];
             }
             shuffleSuggestions();
             // 내 핀 (가져온 직후라도 바로 보이도록 서버 캐시를 거치지 않고 직접 읽는다)
@@ -404,8 +408,14 @@ const Onboarding = (() => {
         }
     }
 
+    /**
+     * 추천 단어: 사람마다 판단이 가장 많이 갈리는 단어들은 항상 보여주고(그 답이 검색 정확도를 가장 많이 올린다),
+     * 나머지 자리는 그다음으로 유익한 단어들 중에서 돌아가며 보여준다.
+     */
     function shuffleSuggestions() {
-        taste.suggestions = shuffle(taste.vocab).slice(0, SUGGESTION_COUNT);
+        const order = taste.testOrder.length ? taste.testOrder : shuffle(taste.vocab);
+        const fixed = order.slice(0, FIXED_SUGGESTIONS);
+        taste.suggestions = [...fixed, ...shuffle(order.slice(FIXED_SUGGESTIONS)).slice(0, SUGGESTION_COUNT - fixed.length)];
         renderWordChips();
     }
 

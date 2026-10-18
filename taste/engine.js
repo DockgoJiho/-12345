@@ -254,10 +254,14 @@ function scoreTest(answers) {
     return { marks, summary };
 }
 
-/** 검색창 자동완성용: 느낌 키워드와 주제, 각각 알아듣는 표현들 */
+// 감각 테스트에서 추천할 단어 순서 (앞일수록 사람마다 판단이 갈려 물어볼 가치가 큰 단어, build-test-vocab.mjs)
+const testVocab = fs.existsSync(path.join(DATA, 'test_vocab.json')) ? readJson('test_vocab.json') : [];
+
+/** 검색창 자동완성용: 느낌 키워드와 주제, 각각 알아듣는 표현들 + 감각 테스트 추천 순서 */
 const vocabulary = () => ({
     keywords: KEYWORDS.map((k) => ({ id: k.id, ko: k.ko, synonyms: k.synonyms })),
-    subjects: SUBJECTS.map((s) => ({ id: s.id, ko: s.ko, synonyms: s.synonyms }))
+    subjects: SUBJECTS.map((s) => ({ id: s.id, ko: s.ko, synonyms: s.synonyms })),
+    testOrder: testVocab.map(keywordKo)
 });
 
 /**

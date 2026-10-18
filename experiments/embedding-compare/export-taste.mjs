@@ -25,6 +25,8 @@ for (const model of ['clip', 'siglip2']) {
 copy('duplicates.json');
 copy('subject_scores.json');
 copy('test_set.json');
+// 감각 테스트 추천 단어 순서 (build-test-vocab.mjs)
+copy('test_vocab.json');
 
 // 키워드 사전과 시작점 (사전에 있는 키워드만)
 const vectors = JSON.parse(fs.readFileSync(path.join(OUT, 'keyword_vectors.json'), 'utf8'));
