@@ -395,18 +395,38 @@ function userFeelTable(pins, marksByWord = {}) {
 }
 
 /**
- * 감각 테스트에서 단어 하나에 보여줄 핀 고르기: 서로 최대한 다른 사진들.
- * 시뮬레이션(experiments/embedding-compare/simulate-test.mjs, 처음 보는 사진 기준 일치도)에서
- *   무작위 12장 0.72 · AI 해석 순으로 섞은 12장 0.68 · 서로 다른 12장 0.73 · 무작위 20장 0.83 · 서로 다른 20장 0.85.
- * AI 해석 순으로 고르면 그 사람 감각이 AI와 반대일 때(매끈한, 멋있는) 한쪽으로 치우친 사진만 나와서 오히려 나빴다.
- * pins: [{ key, vector }], word는 고르는 데 쓰지 않는다 (예전 호출 모양 유지), exclude: 이미 다른 단어에서 보여준 핀 id
+ * 감각 테스트에서 단어 하나에 보여줄 핀 고르기.
+ * - 사전에 있는 단어: 절반은 AI가 그 단어 같다고 본 상위권(상위 40장 중 무작위), 절반은 서로 최대한 다른 사진
+ *   → 상위권 덕분에 "맞아" 예시가 생기고, 다른 사진들 덕분에 AI와 다른 감각도 잡힌다
+ * - 사전에 없는 단어: 서로 최대한 다른 사진들
+ * 시뮬레이션(아카이브 전체에서 고르는 실제 상황, simulate-realistic.mjs, 처음 보는 사진 기준 일치도, 단어당 20장):
+ *   AI 기본 0.48 · 서로 다른 0.72 · 무작위 0.72 · AI 상위 0.75(감각이 AI와 다르면 0.53까지 떨어짐) · 섞기 0.74(가장 나쁜 단어도 0.63)
+ * pins: [{ key, vector }], exclude: 이미 다른 단어에서 보여준 핀 id
  */
+const TOP_POOL = 40;
 function pickTestPins(pins, word, count = 20, exclude = new Set()) {
     const pool = pins.filter((p) => !exclude.has(p.key));
     if (pool.length <= count) return pool.map((p) => p.key);
-    const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-    // 서로 최대한 다른 사진: 하나씩 고르면서 이미 고른 것들과 가장 덜 닮은 사진을 다음으로
-    const sample = shuffle(pool).slice(0, 600);
+    const id = keywordIdOfWord(word);
+    if (!id) return pickDiverse(pool, count);
+    const start = starts[id][USER_MODEL];
+    const top = shuffleList(pool.map((p) => ({ p, s: dot(p.vector, start) })).sort((a, b) => b.s - a.s).slice(0, TOP_POOL))
+        .slice(0, Math.floor(count / 2)).map(({ p }) => p);
+    const topKeys = new Set(top.map((p) => p.key));
+    const diverse = pickDiverse(pool.filter((p) => !topKeys.has(p.key)), count - top.length);
+    return shuffleList([...top.map((p) => p.key), ...diverse]);
+}
+
+function shuffleList(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+    return a;
+}
+
+/** 서로 최대한 다른 사진 count장: 하나씩 고르면서 이미 고른 것들과 가장 덜 닮은 사진을 다음으로 */
+function pickDiverse(pool, count) {
+    if (pool.length <= count) return pool.map((p) => p.key);
+    const sample = shuffleList(pool).slice(0, 600);
     const picked = [sample[0]];
     const nearest = sample.map((p) => dot(p.vector, sample[0].vector));
     while (picked.length < count) {

@@ -61,3 +61,11 @@ create policy "users update own taste marks" on public.taste_marks
 drop policy if exists "users delete own taste marks" on public.taste_marks;
 create policy "users delete own taste marks" on public.taste_marks
     for delete to authenticated using (owner_id = auth.uid());
+
+-- 3) 사이트(anon = 로그인 안 한 방문자, authenticated = 로그인한 사용자)가 이 테이블을 쓸 수 있게 권한을 준다.
+--    누가 어떤 행을 읽고 쓸 수 있는지는 위의 정책(RLS)이 정한다. 새 테이블에 권한이 자동으로 붙지 않는 프로젝트가 있다
+grant select on public.pin_embeddings, public.taste_marks to anon, authenticated;
+grant insert, update, delete on public.pin_embeddings, public.taste_marks to authenticated;
+
+-- 4) Supabase API가 새 테이블을 바로 알아보도록 테이블 목록(schema cache)을 새로 읽게 한다
+notify pgrst, 'reload schema';
