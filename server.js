@@ -1049,14 +1049,14 @@ app.get('/api/search/feel', async (req, res) => {
 
 /**
  * 감각 테스트에서 단어마다 보여줄 내 핀 고르기 (분석된 핀이 있을 때 - 없으면 브라우저가 무작위로 고른다).
- * body: { words: [단어], perWord: 12 } · 로그인 필요. 단어끼리 같은 핀이 겹치지 않게 고른다
+ * body: { words: [단어], perWord: 20 } · 로그인 필요. 서로 최대한 다른 사진들로, 단어끼리 겹치지 않게 고른다
  */
 app.post('/api/taste/rounds', async (req, res) => {
     try {
         const { data: userData, error } = await supabaseForRequest(req).auth.getUser();
         if (error || !userData.user) return res.status(401).json({ error: '로그인이 필요합니다' });
         const words = (Array.isArray(req.body?.words) ? req.body.words : []).map((w) => String(w).slice(0, 30)).filter(Boolean).slice(0, 10);
-        const perWord = Math.min(Math.max(parseInt(req.body?.perWord, 10) || 12, 4), 24);
+        const perWord = Math.min(Math.max(parseInt(req.body?.perWord, 10) || 20, 4), 24);
         const pins = await loadUserVectors(userData.user.id);
         if (pins.length < perWord) return res.json({ success: true, analyzed: pins.length, rounds: [] });
         const shown = new Set();

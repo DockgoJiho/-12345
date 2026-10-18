@@ -395,24 +395,16 @@ function userFeelTable(pins, marksByWord = {}) {
 }
 
 /**
- * 감각 테스트에서 단어 하나에 보여줄 핀 고르기 (무작위보다 답 하나에서 얻는 정보가 많게).
- * - 사전에 있는 단어: AI 기본 해석 순으로 줄 세워 "그런 것 같은" 상위 + 애매한 중간 + "아닐 것 같은" 쪽을 섞는다
- *   → 고를 만한 사진도 있고, 경계를 배울 수 있는 애매한 사진도 들어간다
- * - 사전에 없는 단어: 서로 최대한 다른 사진들 (어느 쪽이 그 단어인지 넓게 탐색)
- * pins: [{ key, vector }], exclude: 이미 다른 단어에서 보여준 핀 id
+ * 감각 테스트에서 단어 하나에 보여줄 핀 고르기: 서로 최대한 다른 사진들.
+ * 시뮬레이션(experiments/embedding-compare/simulate-test.mjs, 처음 보는 사진 기준 일치도)에서
+ *   무작위 12장 0.72 · AI 해석 순으로 섞은 12장 0.68 · 서로 다른 12장 0.73 · 무작위 20장 0.83 · 서로 다른 20장 0.85.
+ * AI 해석 순으로 고르면 그 사람 감각이 AI와 반대일 때(매끈한, 멋있는) 한쪽으로 치우친 사진만 나와서 오히려 나빴다.
+ * pins: [{ key, vector }], word는 고르는 데 쓰지 않는다 (예전 호출 모양 유지), exclude: 이미 다른 단어에서 보여준 핀 id
  */
-function pickTestPins(pins, word, count = 12, exclude = new Set()) {
+function pickTestPins(pins, word, count = 20, exclude = new Set()) {
     const pool = pins.filter((p) => !exclude.has(p.key));
     if (pool.length <= count) return pool.map((p) => p.key);
     const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-    const id = keywordIdOfWord(word);
-    if (id) {
-        const start = starts[id][USER_MODEL];
-        const ranked = pool.map((p) => ({ key: p.key, s: dot(p.vector, start) })).sort((a, b) => b.s - a.s);
-        const band = (from, to, n) => shuffle(ranked.slice(Math.floor(ranked.length * from), Math.max(Math.floor(ranked.length * to), Math.floor(ranked.length * from) + n))).slice(0, n);
-        const top = Math.round(count * 5 / 12), mid = Math.round(count * 4 / 12);
-        return shuffle([...band(0, 0.1, top), ...band(0.1, 0.4, mid), ...band(0.4, 1, count - top - mid)].map((r) => r.key));
-    }
     // 서로 최대한 다른 사진: 하나씩 고르면서 이미 고른 것들과 가장 덜 닮은 사진을 다음으로
     const sample = shuffle(pool).slice(0, 600);
     const picked = [sample[0]];
@@ -445,4 +437,4 @@ function warmUp() {
     setTimeout(next, 1000);
 }
 
-module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest, vocabulary, warmUp, feelTable, DATA_VERSION, decodeVector, userFeelTable, pickTestPins, keywordIdOfWord };
+module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest, vocabulary, warmUp, feelTable, DATA_VERSION, decodeVector, userFeelTable, pickTestPins, keywordIdOfWord, scoreVectors };

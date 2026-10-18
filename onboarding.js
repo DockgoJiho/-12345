@@ -21,7 +21,8 @@ const Onboarding = (() => {
 
     const STEPS = ['welcome', 'request', 'download', 'upload', 'done', 'taste-words', 'taste-round', 'taste-result'];
     // 감각 테스트: 단어 하나에 보여줄 내 핀 수, 고를 수 있는 단어 수, 한 번에 보여줄 추천 단어 수
-    const ROUND_SIZE = 12;
+    // 20장: 시뮬레이션에서 12장보다 처음 보는 사진을 훨씬 잘 맞혔다 (일치도 0.73 → 0.85, simulate-test.mjs)
+    const ROUND_SIZE = 20;
     const MAX_WORDS = 5;
     const SUGGESTION_COUNT = 14;
     // 그중 항상 보여줄 단어 수 (테스트 추천 순서의 맨 앞)
@@ -500,8 +501,8 @@ const Onboarding = (() => {
 
     /**
      * 단어마다 보여줄 내 핀 정하기.
-     * 분석된 핀이 충분하면 서버가 고른다: 그 느낌일 것 같은 사진·애매한 사진·아닐 것 같은 사진을 섞어
-     * 답 하나에서 얻는 정보가 많게 (사전에 없는 단어는 서로 최대한 다른 사진들). 아니면 무작위로.
+     * 분석된 핀이 충분하면 서버가 서로 최대한 다른 사진들로 고른다 (무작위보다 답 하나에서 얻는 정보가 많다).
+     * 아니면 무작위로.
      */
     async function beginRounds() {
         const button = root.querySelector('[data-action="taste-begin"]');
