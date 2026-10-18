@@ -895,6 +895,68 @@ app.get('/api/image', async (req, res) => {
 let tasteEngine = null;
 const taste = () => (tasteEngine ??= require('./taste/engine'));
 
+// ── 다른 사용자의 감각 검색: 브라우저가 분석해 올린 핀 벡터(pin_embeddings) + 감각 테스트 기록(taste_marks) ──
+
+// supabase/taste_analysis.sql을 아직 실행하지 않아 테이블이 없으면 "분석 안 됨"으로 본다
+const isMissingTable = (error) => error && (error.code === '42P01' || /does not exist|schema cache/i.test(error.message || ''));
+
+async function fetchAllRows(table, columns, ownerId) {
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabaseAnon.from(table).select(columns).eq('owner_id', ownerId).range(from, from + 999);
+        if (isMissingTable(error)) return [];
+        if (error) throw error;
+        rows.push(...(data || []));
+        if (!data || data.length < 1000) return rows;
+    }
+}
+
+/**
+ * 그 사람의 분석·테스트 상태를 나타내는 버전 문자열 (분석이 늘거나 테스트를 다시 하면 바뀐다).
+ * 브라우저는 이 값이 붙은 주소로 점수표를 받아서, 바뀌기 전까지는 캐시를 쓴다. 분석된 핀이 없으면 null
+ */
+async function userFeelVersion(ownerId) {
+    const latest = async (table, column) => {
+        const { data, count, error } = await supabaseAnon.from(table).select(column, { count: 'exact' })
+            .eq('owner_id', ownerId).order(column, { ascending: false }).limit(1);
+        if (isMissingTable(error)) return { count: 0, at: '' };
+        if (error) throw error;
+        return { count: count || 0, at: data && data[0] ? data[0][column] : '' };
+    };
+    const [emb, marks] = await Promise.all([latest('pin_embeddings', 'created_at'), latest('taste_marks', 'updated_at')]);
+    if (!emb.count) return null;
+    return crypto.createHash('sha1').update(`${emb.count}|${emb.at}|${marks.count}|${marks.at}|${taste().DATA_VERSION}`).digest('hex').slice(0, 12);
+}
+
+async function loadUserVectors(ownerId) {
+    const engine = taste();
+    return (await fetchAllRows('pin_embeddings', 'pin_id, vector', ownerId))
+        .map((row) => ({ key: row.pin_id, vector: engine.decodeVector(row.vector) }));
+}
+
+async function loadUserMarks(ownerId) {
+    const byWord = {};
+    (await fetchAllRows('taste_marks', 'word, pin_id, value', ownerId)).forEach((row) => {
+        (byWord[row.word] ??= {})[row.pin_id] = row.value;
+    });
+    return byWord;
+}
+
+// 사람별 점수표 (만드는 데 1~4초 - 버전이 같으면 다시 만들지 않는다). 메모리를 생각해 최근 몇 명만 기억한다
+const userFeelCache = new Map();
+const USER_FEEL_CACHE_LIMIT = 6;
+function userFeelTableCached(ownerId, version) {
+    const key = `${ownerId}:${version}`;
+    if (!userFeelCache.has(key)) {
+        const value = Promise.all([loadUserVectors(ownerId), loadUserMarks(ownerId)])
+            .then(([pins, marks]) => taste().userFeelTable(pins, marks));
+        value.catch(() => userFeelCache.delete(key));
+        userFeelCache.set(key, value);
+        while (userFeelCache.size > USER_FEEL_CACHE_LIMIT) userFeelCache.delete(userFeelCache.keys().next().value);
+    }
+    return userFeelCache.get(key);
+}
+
 app.get('/api/taste/test', (req, res) => {
     res.json({ success: true, keywords: taste().testQuestions() });
 });
@@ -918,13 +980,22 @@ app.get('/api/search/index', async (req, res) => {
         }
         const rows = allRows.filter((pin) => pin.image);
         const engine = taste();
+        // 느낌 검색 기준: 기본 아카이브는 주인이 직접 붙인 라벨, 다른 사람은 그 사람이 분석·테스트한 결과
+        // (아직 분석 전이면 기본 아카이브와 겹치는 핀에 한해 AI 기본 해석)
+        const isDefaultArchive = owner.username === DEFAULT_ARCHIVE_USERNAME;
+        const userVersion = isDefaultArchive ? null : await userFeelVersion(owner.id);
+        const feel = isDefaultArchive ? { basis: 'owner', version: engine.DATA_VERSION }
+            : userVersion ? { basis: 'user', owner: owner.id, version: userVersion }
+                : { basis: 'ai', version: engine.DATA_VERSION };
+        // feelKey: 점수표에서 이 핀을 찾는 키 - 기본 아카이브 점수표는 Pinterest 원본 id, 사람별 점수표는 핀 id
+        const feelKey = (row) => (feel.basis === 'user' ? row.id : row.source_pin_id || null);
         res.json({
             success: true,
             owner: { id: owner.id, username: owner.username },
-            feel: { basis: owner.username === DEFAULT_ARCHIVE_USERNAME ? 'owner' : 'ai', version: engine.DATA_VERSION },
+            feel,
             dictionaries: SEARCH_DICTIONARIES,
             vocab: engine.vocabulary(),
-            pins: rows.map((row) => ({ ...mapPin(row), sourcePinId: row.source_pin_id || null }))
+            pins: rows.map((row) => ({ ...mapPin(row), feelKey: feelKey(row) }))
         });
     } catch (error) {
         console.error('검색 색인 실패:', error.message);
@@ -933,10 +1004,49 @@ app.get('/api/search/index', async (req, res) => {
 });
 
 // 핀 × 느낌 키워드 점수표. 주소에 데이터 버전(v)이 붙으므로 브라우저가 오래 캐시해도 된다
-app.get('/api/search/feel', (req, res) => {
-    const basis = req.query.basis === 'owner' ? 'owner' : 'ai';
-    res.set('Cache-Control', 'public, max-age=86400');
-    res.json({ success: true, ...taste().feelTable(basis) });
+app.get('/api/search/feel', async (req, res) => {
+    try {
+        if (req.query.basis === 'user') {
+            const ownerId = String(req.query.owner || '');
+            const version = await userFeelVersion(ownerId);
+            if (!version) return res.status(404).json({ error: '아직 분석된 핀이 없습니다' });
+            const table = await userFeelTableCached(ownerId, version);
+            // 주소의 v가 지금 버전과 같을 때만 오래 캐시하게 한다 (테스트를 다시 하면 v가 바뀐다)
+            res.set('Cache-Control', req.query.v === version ? 'public, max-age=86400' : 'no-cache');
+            return res.json({ success: true, version, ...table });
+        }
+        const basis = req.query.basis === 'owner' ? 'owner' : 'ai';
+        res.set('Cache-Control', 'public, max-age=86400');
+        res.json({ success: true, ...taste().feelTable(basis) });
+    } catch (error) {
+        console.error('느낌 점수표 실패:', error.message);
+        res.status(500).json({ error: '느낌 점수표를 만들지 못했습니다' });
+    }
+});
+
+/**
+ * 감각 테스트에서 단어마다 보여줄 내 핀 고르기 (분석된 핀이 있을 때 - 없으면 브라우저가 무작위로 고른다).
+ * body: { words: [단어], perWord: 12 } · 로그인 필요. 단어끼리 같은 핀이 겹치지 않게 고른다
+ */
+app.post('/api/taste/rounds', async (req, res) => {
+    try {
+        const { data: userData, error } = await supabaseForRequest(req).auth.getUser();
+        if (error || !userData.user) return res.status(401).json({ error: '로그인이 필요합니다' });
+        const words = (Array.isArray(req.body?.words) ? req.body.words : []).map((w) => String(w).slice(0, 30)).filter(Boolean).slice(0, 10);
+        const perWord = Math.min(Math.max(parseInt(req.body?.perWord, 10) || 12, 4), 24);
+        const pins = await loadUserVectors(userData.user.id);
+        if (pins.length < perWord) return res.json({ success: true, analyzed: pins.length, rounds: [] });
+        const shown = new Set();
+        const rounds = words.map((word) => {
+            const picked = taste().pickTestPins(pins, word, perWord, shown);
+            picked.forEach((id) => shown.add(id));
+            return { word, pins: picked };
+        });
+        res.json({ success: true, analyzed: pins.length, rounds });
+    } catch (error) {
+        console.error('감각 테스트 문제 고르기 실패:', error.message);
+        res.status(500).json({ error: '테스트 사진을 고르지 못했습니다' });
+    }
 });
 
 // 검색창 자동완성용 단어 목록 (느낌 키워드 + 주제). 타이핑하는 즉시 브라우저에서 바로 맞춰 보여준다
@@ -948,6 +1058,15 @@ app.get('/api/search/vocab', (req, res) => {
 // 테스트 답 → 기준(marks)과 감각 프로필. 서버에 저장하지 않고 브라우저가 들고 있다가 검색할 때 보낸다
 app.post('/api/taste/test/score', (req, res) => {
     res.json({ success: true, ...taste().scoreTest(req.body?.answers) });
+});
+
+/**
+ * 가동 확인용 (UptimeRobot이 5분마다 부른다). DB를 실제로 한 번 조회한다 - Supabase 무료 프로젝트는
+ * 일주일 동안 DB 사용이 없으면 자동으로 일시 중지되는데, /api/status는 DB를 건드리지 않아 그걸 막지 못했다.
+ */
+app.get('/api/health', async (req, res) => {
+    const { error } = await supabaseAnon.from('profiles').select('id', { head: true, count: 'exact' }).limit(1);
+    res.status(error ? 503 : 200).json({ ok: !error, db: error ? error.message : 'ok' });
 });
 
 app.get('/api/status', (req, res) => {

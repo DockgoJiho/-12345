@@ -1195,15 +1195,18 @@ class ParticleGallery {
 
             let feel = null;
             if (index.feel) {
-                const table = await (await fetch(`/api/search/feel?basis=${index.feel.basis}&v=${index.feel.version}`)).json();
-                feel = SearchCore.decodeFeelTable(table, base64ToBytes);
+                // basis=user: 그 사람이 분석·테스트한 결과로 만든 점수표 (owner = 터널 주인 id)
+                const owner = index.feel.owner ? `&owner=${encodeURIComponent(index.feel.owner)}` : '';
+                const response = await fetch(`/api/search/feel?basis=${index.feel.basis}${owner}&v=${index.feel.version}`);
+                const table = await response.json();
+                if (response.ok && table.success) feel = SearchCore.decodeFeelTable(table, base64ToBytes);
             }
 
             this.searchDictionaries = index.dictionaries;
             this.searchVocab = index.vocab;
             this.searchLocal = {
                 parser: SearchCore.createQueryParser(index.vocab),
-                docs: index.pins.map((pin) => ({ pin, sourcePinId: pin.sourcePinId, doc: SearchCore.toSearchDoc(pin, index.dictionaries) })),
+                docs: index.pins.map((pin) => ({ pin, feelKey: pin.feelKey, doc: SearchCore.toSearchDoc(pin, index.dictionaries) })),
                 feel
             };
             this.renderSearchSuggestions();
@@ -1232,7 +1235,7 @@ class ParticleGallery {
             docs.splice(i, 1);
         } else {
             const pin = { ...docs[i].pin, ...patch };
-            docs[i] = { pin, sourcePinId: pin.sourcePinId, doc: SearchCore.toSearchDoc(pin, this.searchDictionaries) };
+            docs[i] = { pin, feelKey: pin.feelKey, doc: SearchCore.toSearchDoc(pin, this.searchDictionaries) };
         }
         this.shownQuery = '';
         this.tunnelQuery = '';

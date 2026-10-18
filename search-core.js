@@ -166,14 +166,14 @@
 
     /**
      * 터널 검색 전체: 느낌 키워드("차가운")나 주제어("사람 없는")를 알아들으면 점수표로, 아니면 글자로 찾는다.
-     * docs: [{ pin, doc, sourcePinId }] - 터널 주인의 핀들. feel: decodeFeelTable 결과 (없으면 글자 검색만)
+     * docs: [{ pin, doc, feelKey }] - 터널 주인의 핀들. feelKey = 점수표(feel.ids)에서 이 핀을 찾는 키. feel: decodeFeelTable 결과 (없으면 글자 검색만)
      */
     function rankSearch(query, { parser, docs, feel }) {
         const rawQuery = String(query || '').trim();
         const keywords = Array.from(new Set(rawQuery.toLowerCase().split(/\s+/).filter(Boolean)));
 
         const analyzed = new Map();
-        if (feel) docs.forEach((d) => { if (d.sourcePinId && feel.rowOf.has(d.sourcePinId)) analyzed.set(d.sourcePinId, d); });
+        if (feel) docs.forEach((d) => { if (d.feelKey && feel.rowOf.has(d.feelKey)) analyzed.set(d.feelKey, d); });
 
         let feelResult = { keywords: [], include: [], exclude: [], unknown: keywords, pins: [] };
         if (analyzed.size) {
@@ -213,7 +213,7 @@
         const feelActive = feelResult.keywords.length > 0 || feelResult.include.length > 0;
         // 감각 검색이 알아듣지 못한 나머지 말은 글자 검색으로 찾는다 (아무것도 못 알아들었으면 검색어 전체)
         const textKeywords = feelActive || feelResult.exclude.length ? feelResult.unknown : keywords;
-        const excluded = (d) => d.sourcePinId && feelResult.exclude.some((s) => feel.hasSubject(s, d.sourcePinId));
+        const excluded = (d) => d.feelKey && feelResult.exclude.some((s) => feel.hasSubject(s, d.feelKey));
 
         let ranked;
         if (feelActive) {

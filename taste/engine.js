@@ -95,34 +95,41 @@ function scoreKeyword(keywordId, marks = {}) {
     const fused = new Map();
     for (const name of MODELS) {
         const index = indexes[name];
-        const start = Float32Array.from(starts[keywordId][name]);
         const rowsWith = (value) => Object.entries(marks)
             .filter(([, v]) => v === value)
             .map(([pin]) => index.rowOf.get(pin))
             .filter((r) => r !== undefined);
-        const yesVecs = rowsWith(YES).map((r) => vecAt(index, r));
-        const noVecs = rowsWith(NO).map((r) => vecAt(index, r));
         const all = index.ids.map((_, i) => vecAt(index, i));
-
-        let scores;
-        if (yesVecs.length >= CLASSIFIER_MIN_LABELS && noVecs.length >= CLASSIFIER_MIN_LABELS) {
-            const w = trainClassifier(index.dim, yesVecs, noVecs);
-            const learned = zscore(all.map((x) => dot(x, w)));
-            const prior = zscore(all.map((x) => dot(x, start)));
-            scores = learned.map((s, i) => s + PRIOR_WEIGHT * prior[i]);
-        } else {
-            const query = Float32Array.from(start);
-            const pull = (vecs, weight) => vecs.forEach((v) => {
-                for (let d = 0; d < index.dim; d++) query[d] += weight * v[d] / vecs.length;
-            });
-            pull(yesVecs, POSITIVE_WEIGHT);
-            pull(noVecs, -NEGATIVE_WEIGHT);
-            const q = normalize(query);
-            scores = all.map((x) => dot(x, q));
-        }
-        zscore(scores).forEach((z, i) => fused.set(index.ids[i], (fused.get(index.ids[i]) ?? 0) + z / MODELS.length));
+        const z = scoreVectors(all, starts[keywordId][name], rowsWith(YES).map((r) => all[r]), rowsWith(NO).map((r) => all[r]));
+        z.forEach((v, i) => fused.set(index.ids[i], (fused.get(index.ids[i]) ?? 0) + v / MODELS.length));
     }
     return fused;
+}
+
+/**
+ * 한 모델의 임베딩들(all)을 키워드 하나로 채점해 표준화 점수 배열을 돌려준다.
+ * start: AI 기본 해석(키워드 묘사의 텍스트 벡터), 없으면(사전에 없는 단어) 라벨만으로 학습한다.
+ */
+function scoreVectors(all, start, yesVecs, noVecs) {
+    const dim = all[0].length;
+    let scores;
+    if (yesVecs.length >= CLASSIFIER_MIN_LABELS && noVecs.length >= CLASSIFIER_MIN_LABELS) {
+        const w = trainClassifier(dim, yesVecs, noVecs);
+        const learned = zscore(all.map((x) => dot(x, w)));
+        if (!start) return learned;
+        const prior = zscore(all.map((x) => dot(x, start)));
+        scores = learned.map((v, i) => v + PRIOR_WEIGHT * prior[i]);
+    } else {
+        const query = start ? Float32Array.from(start) : new Float32Array(dim);
+        const pull = (vecs, weight) => vecs.forEach((v) => {
+            for (let d = 0; d < dim; d++) query[d] += weight * v[d] / vecs.length;
+        });
+        pull(yesVecs, POSITIVE_WEIGHT);
+        pull(noVecs, -NEGATIVE_WEIGHT);
+        const q = normalize(query);
+        scores = all.map((x) => dot(x, q));
+    }
+    return zscore(scores);
 }
 
 // ── 검색어 해석 ───────────────────────────────────────────────
@@ -311,6 +318,114 @@ function feelTable(basis) {
     return table;
 }
 
+// ── 다른 사용자의 핀: 브라우저가 SigLIP 2 이미지 모델로 분석해서 pin_embeddings에 올린 벡터 ──────────
+
+const USER_MODEL = 'siglip2';
+const subjectVectors = readJson('subject_vectors.json');
+const subjectCategoryIds = Object.keys(subjectVectors.categories);
+const subjectCategoryVecs = subjectCategoryIds.map((c) => Float32Array.from(subjectVectors.categories[c]));
+
+/** pin_embeddings.vector (길이 1 벡터 × 127을 부호 있는 정수로 줄여 base64) → 길이 1 벡터 */
+function decodeVector(b64) {
+    const bytes = Buffer.from(b64, 'base64');
+    const v = new Float32Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) v[i] = ((bytes[i] << 24) >> 24) / 127;
+    return normalize(v);
+}
+
+/** 감각 테스트에 쓴 단어 → 느낌 키워드 id. 사전에 없는 말(직접 입력한 단어)이면 null */
+function keywordIdOfWord(word) {
+    const { ids, unknown } = parseKeywords(String(word));
+    return ids.length === 1 && !unknown.length ? ids[0] : null;
+}
+
+/**
+ * 다른 사용자의 "핀 × 느낌 키워드 점수표" (feelTable과 같은 모양 - 브라우저 search-core.js가 그대로 쓴다).
+ * pins: [{ key: 핀 id, vector }], marksByWord: { 테스트 단어: { 핀 id: 2(골랐음) | 0(보여줬는데 안 골랐음) } }
+ * 키워드마다 AI 기본 해석에서 출발해, 그 사람이 테스트에서 고르고 안 고른 핀으로 경계를 학습한다.
+ */
+function userFeelTable(pins, marksByWord = {}) {
+    const keys = pins.map((p) => p.key);
+    const all = pins.map((p) => p.vector);
+    const rowOf = new Map(keys.map((k, i) => [k, i]));
+    // 단어별 표시를 키워드별로 합친다 (같은 뜻의 다른 말로 테스트했어도 같은 키워드로)
+    const marksByKeyword = {};
+    Object.entries(marksByWord).forEach(([word, marks]) => {
+        const id = keywordIdOfWord(word);
+        if (id) Object.assign(marksByKeyword[id] ??= {}, marks);
+    });
+    const vecsWith = (marks, value) => Object.entries(marks).filter(([, v]) => v === value)
+        .map(([key]) => rowOf.get(key)).filter((r) => r !== undefined).map((r) => all[r]);
+
+    const scores = {}, rejected = {};
+    KEYWORDS.forEach((k) => {
+        const marks = marksByKeyword[k.id] ?? {};
+        const z = all.length ? scoreVectors(all, starts[k.id][USER_MODEL], vecsWith(marks, YES), vecsWith(marks, NO)) : [];
+        scores[k.id] = toBase64(Int16Array.from(z, (v) => Math.max(-32767, Math.min(32767, Math.round(v * 1000)))));
+        const no = Object.entries(marks).filter(([, v]) => v === NO).map(([key]) => key);
+        if (no.length) rejected[k.id] = no;
+    });
+
+    // 주제: 카테고리 묘사끼리 경쟁시킨 확률 (SigLIP 2 하나로 판별하므로 기준선도 그에 맞춘 값을 쓴다)
+    const subjects = {};
+    const probs = all.map((x) => {
+        const logits = subjectCategoryVecs.map((c) => dot(x, c) * subjectVectors.logitScale);
+        const max = Math.max(...logits);
+        const e = logits.map((l) => Math.exp(l - max));
+        const total = e.reduce((a, b) => a + b, 0);
+        return e.map((v) => v / total);
+    });
+    SUBJECTS.forEach((sub) => {
+        const cols = subjectVectors.subjects[sub.id].map((c) => subjectCategoryIds.indexOf(c));
+        subjects[sub.id] = toBase64(Uint16Array.from(probs, (p) => Math.round(Math.min(cols.reduce((a, c) => a + p[c], 0), 1) * 65535)));
+    });
+
+    return {
+        ids: keys,
+        unique: keys.map((_, i) => i),
+        labels: {
+            keywords: Object.fromEntries(KEYWORDS.map((k) => [k.id, k.ko])),
+            subjects: Object.fromEntries(SUBJECTS.map((sub) => [sub.id, sub.ko]))
+        },
+        scores,
+        subjects,
+        thresholds: subjectVectors.thresholds,
+        rejected
+    };
+}
+
+/**
+ * 감각 테스트에서 단어 하나에 보여줄 핀 고르기 (무작위보다 답 하나에서 얻는 정보가 많게).
+ * - 사전에 있는 단어: AI 기본 해석 순으로 줄 세워 "그런 것 같은" 상위 + 애매한 중간 + "아닐 것 같은" 쪽을 섞는다
+ *   → 고를 만한 사진도 있고, 경계를 배울 수 있는 애매한 사진도 들어간다
+ * - 사전에 없는 단어: 서로 최대한 다른 사진들 (어느 쪽이 그 단어인지 넓게 탐색)
+ * pins: [{ key, vector }], exclude: 이미 다른 단어에서 보여준 핀 id
+ */
+function pickTestPins(pins, word, count = 12, exclude = new Set()) {
+    const pool = pins.filter((p) => !exclude.has(p.key));
+    if (pool.length <= count) return pool.map((p) => p.key);
+    const shuffle = (arr) => { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+    const id = keywordIdOfWord(word);
+    if (id) {
+        const start = starts[id][USER_MODEL];
+        const ranked = pool.map((p) => ({ key: p.key, s: dot(p.vector, start) })).sort((a, b) => b.s - a.s);
+        const band = (from, to, n) => shuffle(ranked.slice(Math.floor(ranked.length * from), Math.max(Math.floor(ranked.length * to), Math.floor(ranked.length * from) + n))).slice(0, n);
+        const top = Math.round(count * 5 / 12), mid = Math.round(count * 4 / 12);
+        return shuffle([...band(0, 0.1, top), ...band(0.1, 0.4, mid), ...band(0.4, 1, count - top - mid)].map((r) => r.key));
+    }
+    // 서로 최대한 다른 사진: 하나씩 고르면서 이미 고른 것들과 가장 덜 닮은 사진을 다음으로
+    const sample = shuffle(pool).slice(0, 600);
+    const picked = [sample[0]];
+    const nearest = sample.map((p) => dot(p.vector, sample[0].vector));
+    while (picked.length < count) {
+        let best = -1;
+        sample.forEach((p, i) => { if (!picked.includes(p) && (best < 0 || nearest[i] < nearest[best])) best = i; });
+        picked.push(sample[best]);
+        sample.forEach((p, i) => { nearest[i] = Math.max(nearest[i], dot(p.vector, sample[best].vector)); });
+    }
+    return picked.map((p) => p.key);
+}
+
 // 데이터를 다시 내보내면(export-taste.mjs) 바뀌는 값 - 브라우저가 옛 점수표를 캐시에서 계속 쓰지 않게 주소에 붙인다
 const DATA_VERSION = String(Math.max(...fs.readdirSync(DATA).map((f) => fs.statSync(path.join(DATA, f)).mtimeMs)) | 0);
 
@@ -330,4 +445,4 @@ function warmUp() {
     setTimeout(next, 1000);
 }
 
-module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest, vocabulary, warmUp, feelTable, DATA_VERSION };
+module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest, vocabulary, warmUp, feelTable, DATA_VERSION, decodeVector, userFeelTable, pickTestPins, keywordIdOfWord };

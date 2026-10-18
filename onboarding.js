@@ -123,6 +123,7 @@ const Onboarding = (() => {
                     <h2 class="ob-title" data-done-title>다 됐어요!</h2>
                     <p class="ob-text">이제 내 감각을 키워드로 만들어 볼까요?
                     단어를 고르고, 내 핀 중에서 그 느낌인 이미지를 골라 보세요. 1~2분이면 돼요.</p>
+                    <div class="ob-status ob-analysis" data-analysis-status></div>
                     <div class="ob-actions">
                         <a class="ob-btn ob-btn-ghost" data-link="tunnel" href="#">나중에 · 터널로 가기</a>
                         <button type="button" class="ob-btn ob-btn-primary" data-action="taste-start">감각 테스트 시작 →</button>
@@ -143,6 +144,7 @@ const Onboarding = (() => {
                     </form>
                     <div class="ob-selected" data-selected-words></div>
                     <div class="ob-status" data-taste-status></div>
+                    <div class="ob-status ob-analysis" data-analysis-status></div>
                     <div class="ob-actions">
                         <button type="button" class="ob-btn ob-btn-ghost" data-action="later">나중에 할게요</button>
                         <button type="button" class="ob-btn ob-btn-primary" data-action="taste-begin" disabled>시작 →</button>
@@ -358,7 +360,33 @@ const Onboarding = (() => {
             : '새로 가져올 핀이 없어요 - 이미 다 들어와 있어요';
         if (inserted && skipped) root.querySelector('[data-done-title]').textContent += ` (이미 있던 ${skipped.toLocaleString()}개는 건너뜀)`;
         show(STEPS.indexOf('done'));
+        startAnalysis();
         if (onFinished) onFinished(inserted);
+    }
+
+    // ── 내 핀 분석 (pin-analyzer.js): 생김새를 숫자로 계산해 두면, 테스트에 나오지 않은 핀에도 내 감각이 적용된다 ──
+
+    function setAnalysisStatus(text, isError = false) {
+        root.querySelectorAll('[data-analysis-status]').forEach((el) => {
+            el.textContent = text;
+            el.classList.toggle('error', isError);
+        });
+    }
+
+    /** 아직 분석 안 된 내 핀을 이 브라우저에서 분석한다 (이미 된 핀은 건너뛰고, 창을 닫으면 다음에 이어서) */
+    function startAnalysis() {
+        if (!window.PinAnalyzer || PinAnalyzer.isRunning()) return;
+        PinAnalyzer.analyzeMine({
+            onProgress: ({ phase, done, total, failed }) => {
+                if (phase === 'check') setAnalysisStatus('내 핀 분석 준비 중...');
+                else if (phase === 'model') setAnalysisStatus(`내 핀 ${total.toLocaleString()}개를 분석하려고 이미지 모델을 불러오는 중... (처음 한 번만 시간이 걸려요)`);
+                else if (phase === 'analyze') setAnalysisStatus(`내 핀 분석 중 ${done.toLocaleString()} / ${total.toLocaleString()} - 이 창을 열어 두면 계속 진행돼요`);
+                else setAnalysisStatus(total ? `분석 완료 - 테스트에 나오지 않은 핀에도 내 감각이 적용돼요${failed ? ` (이미지를 못 읽은 핀 ${failed}개 제외)` : ''}` : '');
+            }
+        }).catch((err) => {
+            console.warn('내 핀 분석 실패:', err);
+            setAnalysisStatus(`내 핀 분석을 하지 못했어요: ${err.message}. 테스트는 그대로 할 수 있어요.`, true);
+        });
     }
 
     // ── 감각 테스트: 내 핀에서 단어마다 "그 느낌인 이미지"를 고르면, 고른 핀에 그 단어가 키워드로 붙는다 ──
@@ -386,6 +414,7 @@ const Onboarding = (() => {
 
     async function startTaste() {
         me = me || await loadMe();
+        startAnalysis();
         taste.words = [];
         renderSelectedWords();
         show(STEPS.indexOf('taste-words'));
@@ -469,13 +498,42 @@ const Onboarding = (() => {
             ? `${taste.words.length}개 단어로 시작 →` : '시작 →';
     }
 
-    function beginRounds() {
+    /**
+     * 단어마다 보여줄 내 핀 정하기.
+     * 분석된 핀이 충분하면 서버가 고른다: 그 느낌일 것 같은 사진·애매한 사진·아닐 것 같은 사진을 섞어
+     * 답 하나에서 얻는 정보가 많게 (사전에 없는 단어는 서로 최대한 다른 사진들). 아니면 무작위로.
+     */
+    async function beginRounds() {
+        const button = root.querySelector('[data-action="taste-begin"]');
+        button.disabled = true;
+        let chosenByServer = null;
+        try {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            const response = await fetch('/api/taste/rounds', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session ? session.access_token : ''}` },
+                body: JSON.stringify({ words: taste.words, perWord: ROUND_SIZE })
+            });
+            const data = await response.json();
+            if (response.ok && data.rounds && data.rounds.length === taste.words.length) {
+                chosenByServer = new Map(data.rounds.map((r) => [r.word, r.pins]));
+            }
+        } catch (err) {
+            console.warn('테스트 사진을 서버에서 고르지 못해 무작위로 고릅니다:', err);
+        }
+        button.disabled = false;
+
+        const byId = new Map(taste.pins.map((p) => [p.id, p]));
         // 단어마다 서로 다른 핀을 보여준다 (핀이 모자라면 겹칠 수 있다)
         let pool = shuffle(taste.pins);
         taste.rounds = taste.words.map((word) => {
             // 다시 하는 경우: 전에 이 단어로 고른 핀 몇 장은 다시 보여준다 (안 고르면 그 단어가 빠진다)
             const previous = shuffle(taste.pins.filter((p) => p.customTags.includes(word))).slice(0, RECHECK_PER_WORD);
             const fresh = [];
+            const serverPicks = (chosenByServer && chosenByServer.get(word)) || [];
+            serverPicks.map((id) => byId.get(id)).forEach((pin) => {
+                if (pin && fresh.length < ROUND_SIZE - previous.length && !previous.includes(pin)) fresh.push(pin);
+            });
             while (fresh.length < ROUND_SIZE - previous.length) {
                 if (!pool.length) pool = shuffle(taste.pins);
                 const pin = pool.pop();
@@ -534,6 +592,24 @@ const Onboarding = (() => {
         finishTaste();
     }
 
+    /**
+     * 테스트 기록을 남긴다: 단어마다 보여준 핀을 고르면 2(맞아), 안 고르면 0(아니야).
+     * 안 고른 핀까지 있어야 서버가 "이 사람의 경계"를 학습해서, 테스트에 안 나온 핀에도 그 감각을 적용할 수 있다.
+     * 기록할 곳(taste_marks)이 아직 없으면(DB 설정 전) 키워드 태그만 저장하고 넘어간다.
+     */
+    async function saveTasteMarks() {
+        const rows = taste.rounds.flatMap((round) => round.pins.map((pin) => ({
+            owner_id: me.id,
+            word: round.word,
+            pin_id: pin.id,
+            value: round.chosen.has(pin.id) ? 2 : 0,
+            updated_at: new Date().toISOString()
+        })));
+        if (!rows.length) return;
+        const { error } = await supabaseClient.from('taste_marks').upsert(rows, { onConflict: 'owner_id,word,pin_id' });
+        if (error) console.warn('감각 테스트 기록을 남기지 못했어요 (키워드 태그는 저장됨):', error.message);
+    }
+
     /** 고른 핀에는 그 단어를 붙이고, 보여줬는데 안 고른 핀에서는 그 단어를 뗀다 (감각 갱신) */
     async function finishTaste() {
         show(STEPS.indexOf('taste-result'));
@@ -566,6 +642,7 @@ const Onboarding = (() => {
                     taste.pins.find((p) => p.id === id).customTags = tags;
                 }));
             }
+            await saveTasteMarks();
             status.textContent = '저장했어요';
             if (onTasteSaved) onTasteSaved();
         } catch (err) {
