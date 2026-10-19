@@ -219,7 +219,9 @@
 }
 
 .ob-found.hidden,
-.ob-bar.hidden {
+.ob-bar.hidden,
+.ob-btn.hidden,
+.ob-text-btn.hidden {
     display: none;
 }
 

@@ -19,7 +19,7 @@ const Onboarding = (() => {
     let foundPins = [];
     let onFinished = null;
 
-    const STEPS = ['welcome', 'request', 'download', 'upload', 'done', 'taste-words', 'taste-round', 'taste-result'];
+    const STEPS = ['welcome', 'request', 'download', 'upload', 'sync', 'done', 'taste-words', 'taste-round', 'taste-result'];
     // 감각 테스트: 단어 하나에 보여줄 내 핀 수, 고를 수 있는 단어 수, 한 번에 보여줄 추천 단어 수
     // 20장: 시뮬레이션에서 12장보다 처음 보는 사진을 훨씬 잘 맞혔다 (일치도 0.73 → 0.85, simulate-test.mjs)
     const ROUND_SIZE = 20;
@@ -56,10 +56,26 @@ const Onboarding = (() => {
                     <h2 class="ob-title" id="ob-title">내 핀이 3D 터널이 됩니다</h2>
                     <p class="ob-text">Pinterest에 모아 둔 이미지가 끝없이 흐르는 터널이 돼요.
                     나만의 감각을 키워드로 만들어 보세요.</p>
-                    <p class="ob-text ob-muted">먼저 내 핀을 가져와야 해요. 3단계면 끝나요.</p>
+                    <p class="ob-text ob-muted" data-welcome-hint>먼저 내 핀을 가져와야 해요. Pinterest 계정을 연결하면 바로 가져와요.</p>
+                    <div class="ob-status" data-welcome-status></div>
                     <div class="ob-actions">
                         <button type="button" class="ob-btn ob-btn-ghost" data-action="later">나중에 할게요</button>
-                        <button type="button" class="ob-btn ob-btn-primary" data-action="next">시작하기 →</button>
+                        <button type="button" class="ob-btn ob-btn-primary" data-action="connect-pinterest">Pinterest 계정 연결하기 →</button>
+                    </div>
+                    <div class="ob-word-tools">
+                        <button type="button" class="ob-text-btn" data-action="next" data-zip-path>Pinterest 데이터 파일(ZIP)로 가져오기</button>
+                    </div>
+                </section>
+
+                <section class="ob-step" data-step="sync">
+                    <div class="ob-visual ob-visual-tunnel">${miniTunnel()}</div>
+                    <div class="ob-kicker">PINTEREST</div>
+                    <h2 class="ob-title">Pinterest에서 내 핀을 가져오는 중</h2>
+                    <p class="ob-text ob-muted">보드가 많으면 1~2분 걸릴 수 있어요. 이 창을 열어 두세요.</p>
+                    <div class="ob-status" data-sync-status></div>
+                    <div class="ob-actions">
+                        <button type="button" class="ob-btn ob-btn-ghost" data-action="later">닫기</button>
+                        <button type="button" class="ob-btn ob-btn-primary hidden" data-action="sync-retry">다시 시도</button>
                     </div>
                 </section>
 
@@ -187,6 +203,8 @@ const Onboarding = (() => {
             if (action === 'later') close(true);
             if (action === 'skip-to-upload') show(STEPS.indexOf('upload'));
             if (action === 'import') runImport();
+            if (action === 'connect-pinterest') connectPinterest();
+            if (action === 'sync-retry') runPinterestSync();
             if (action === 'taste-start') startTaste();
             if (action === 'taste-shuffle') shuffleSuggestions();
             if (action === 'taste-begin') beginRounds();
@@ -316,6 +334,80 @@ const Onboarding = (() => {
         root.querySelector('[data-bar]').classList.add('hidden');
         root.querySelector('[data-bar-fill]').style.width = '0';
         root.querySelector('[data-action="import"]').disabled = true;
+    }
+
+    // ── Pinterest 계정 연결 (API) ───────────────────────────────
+
+    /** 서버에 Pinterest 앱 키가 없으면(승인 전) 연결 버튼을 숨기고 ZIP 가져오기를 기본으로 */
+    async function applyPinterestAvailability() {
+        let ready = false;
+        try { ready = !!(await (await fetch('/api/status')).json()).hasPinterestOAuth; } catch (e) { /* 모르면 ZIP으로 */ }
+        root.querySelector('[data-action="connect-pinterest"]').classList.toggle('hidden', !ready);
+        const zip = root.querySelector('[data-zip-path]');
+        zip.classList.toggle('ob-btn', !ready);
+        zip.classList.toggle('ob-btn-primary', !ready);
+        zip.classList.toggle('ob-text-btn', ready);
+        zip.textContent = ready ? 'Pinterest 데이터 파일(ZIP)로 가져오기' : '시작하기 →';
+        root.querySelector('[data-welcome-hint]').textContent = ready
+            ? '먼저 내 핀을 가져와야 해요. Pinterest 계정을 연결하면 바로 가져와요.'
+            : '먼저 내 핀을 가져와야 해요. 3단계면 끝나요.';
+    }
+
+    /** Pinterest 동의 화면으로 갔다가 /index.html?pinterest=connected 로 돌아온다 (landing-auth.js → afterPinterestConnect) */
+    async function connectPinterest() {
+        const status = root.querySelector('[data-welcome-status]');
+        status.classList.remove('error');
+        status.textContent = 'Pinterest로 이동하는 중...';
+        try {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            const response = await fetch('/auth/pinterest/start', { method: 'POST', headers: { Authorization: `Bearer ${session ? session.access_token : ''}` } });
+            const data = await response.json();
+            if (!response.ok || !data.url) throw new Error(data.error || response.status);
+            window.location.href = data.url;
+        } catch (err) {
+            status.classList.add('error');
+            status.textContent = `Pinterest 연결을 시작하지 못했어요: ${err.message}. ZIP 파일로도 가져올 수 있어요.`;
+        }
+    }
+
+    /** 연결된 Pinterest에서 핀을 가져오고, 끝나면 "다 됐어요" 단계와 내 핀 분석으로 이어간다 */
+    async function runPinterestSync() {
+        show(STEPS.indexOf('sync'));
+        const status = root.querySelector('[data-sync-status]');
+        const retry = root.querySelector('[data-action="sync-retry"]');
+        status.classList.remove('error');
+        status.textContent = '보드와 핀을 읽는 중...';
+        retry.classList.add('hidden');
+        try {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            const response = await fetch('/api/pinterest/sync', { method: 'POST', headers: { Authorization: `Bearer ${session ? session.access_token : ''}` } });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || response.status);
+            if (data.busy) {
+                status.textContent = '이미 가져오는 중이에요. 잠시 뒤 다시 시도해 주세요.';
+                retry.classList.remove('hidden');
+                return;
+            }
+            // 자동 동기화(pinterest-autosync.js)가 곧바로 또 돌지 않게, 방금 가져온 시각을 남긴다
+            try { localStorage.setItem(`pinterest-last-sync-${me.id}`, String(Date.now())); } catch (e) { /* 무시 */ }
+            try { localStorage.removeItem(`onboarding-snooze-${me.id}`); } catch (e) { /* 무시 */ }
+            root.querySelector('[data-done-title]').textContent = data.inserted
+                ? `Pinterest에서 핀 ${data.inserted.toLocaleString()}개를 가져왔어요!`
+                : '새로 가져올 핀이 없어요 - 이미 다 들어와 있어요';
+            show(STEPS.indexOf('done'));
+            startAnalysis();
+            if (onFinished) onFinished(data.inserted);
+        } catch (err) {
+            status.classList.add('error');
+            status.textContent = `가져오지 못했어요: ${err.message}`;
+            retry.classList.remove('hidden');
+        }
+    }
+
+    /** Pinterest 동의 화면에서 돌아왔을 때 (index.html?pinterest=connected) - 바로 핀을 가져온다 */
+    async function afterPinterestConnect(options = {}) {
+        await open({ ...options, startAt: 'sync' });
+        runPinterestSync();
     }
 
     // ── 가져오기 ────────────────────────────────────────────
@@ -709,6 +801,7 @@ const Onboarding = (() => {
             });
         }
         resetUpload();
+        applyPinterestAvailability();
         root.classList.remove('hidden');
         if (startAt === 'taste') startTaste();
         else show(STEPS.indexOf(startAt));
@@ -729,5 +822,5 @@ const Onboarding = (() => {
         if (count === 0) open(options);
     }
 
-    return { open, maybeAutoOpen };
+    return { open, maybeAutoOpen, afterPinterestConnect };
 })();

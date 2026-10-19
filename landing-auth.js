@@ -300,7 +300,8 @@ pinterestConnectBtn.addEventListener('click', async () => {
     if (!result) return;
 
     if (result === 'connected') {
-        showPinterestToast('Pinterest 계정이 연동되었습니다. 다시 눌러서 동기화해보세요.');
+        // 연결하고 돌아오면 바로 핀을 가져오고 → 내 핀 분석 → 감각 테스트로 이어간다
+        Onboarding.afterPinterestConnect();
     } else if (result === 'error') {
         showPinterestToast('Pinterest 연동에 실패했습니다. 다시 시도해주세요.', true);
     }
