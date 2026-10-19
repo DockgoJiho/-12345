@@ -417,6 +417,25 @@ function pickTestPins(pins, word, count = 20, exclude = new Set()) {
     return shuffleList([...top.map((p) => p.key), ...diverse]);
 }
 
+/**
+ * 감각 테스트 두 번째 "확인" 라운드: 첫 라운드에서 고른 사진과 가장 닮은 사진들 (하나도 안 골랐으면 AI가 그 단어 같다고 본 사진).
+ * 시뮬레이션(simulate-realistic.mjs): 첫 라운드 20장만 0.78 → 확인 12장을 항상 더하면 0.86 (고른 게 적을 때만 더하면 0.79).
+ * picked / shown: 첫 라운드에서 고른 핀 id / 보여준 핀 id
+ */
+function pickConfirmPins(pins, word, picked, shown, count = 12) {
+    const seen = new Set(shown);
+    const pool = pins.filter((p) => !seen.has(p.key));
+    if (pool.length <= count) return pool.map((p) => p.key);
+    const byKey = new Map(pins.map((p) => [p.key, p.vector]));
+    const pickedVecs = picked.map((k) => byKey.get(k)).filter(Boolean);
+    const id = keywordIdOfWord(word);
+    let score;
+    if (pickedVecs.length) score = (x) => Math.max(...pickedVecs.map((v) => dot(x, v)));
+    else if (id) score = (x) => dot(x, starts[id][USER_MODEL]);
+    else return pickDiverse(pool, count);
+    return pool.map((p) => ({ key: p.key, s: score(p.vector) })).sort((a, b) => b.s - a.s).slice(0, count).map((r) => r.key);
+}
+
 function shuffleList(arr) {
     const a = [...arr];
     for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
@@ -457,4 +476,4 @@ function warmUp() {
     setTimeout(next, 1000);
 }
 
-module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest, vocabulary, warmUp, feelTable, DATA_VERSION, decodeVector, userFeelTable, pickTestPins, keywordIdOfWord, scoreVectors };
+module.exports = { search, hasSubject, isAnalyzed, sanitizeMarks, testQuestions, scoreTest, vocabulary, warmUp, feelTable, DATA_VERSION, decodeVector, userFeelTable, pickTestPins, pickConfirmPins, keywordIdOfWord, scoreVectors };

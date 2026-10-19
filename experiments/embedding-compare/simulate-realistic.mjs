@@ -36,13 +36,37 @@ function agreement(scores, yes, no) {
 }
 const learn = (id, yes, no) => engine.scoreVectors(vectors, starts[id].siglip2, yes.map((p) => vectors[rowOf.get(p)]), no.map((p) => vectors[rowOf.get(p)]));
 
+// 답을 보고 더 묻는 방식: 고른 사진이 MIN_PICKS 미만이면 12장을 더 보여준다
+// (0장이면 AI가 그 단어 같다고 본 사진 중 안 보여준 것, 1장 이상이면 고른 사진과 닮은 사진)
+const MIN_PICKS = 3, MORE = 12;
+function followUp(id, shown, says) {
+    const picked = shown.filter(says);
+    if (picked.length >= MIN_PICKS) return shown;
+    const seen = new Set(shown);
+    const target = picked.length
+        ? (x) => Math.max(...picked.map((p) => dot(x, vectors[rowOf.get(p)])))
+        : (x) => dot(x, starts[id].siglip2);
+    const more = ids.filter((p) => !seen.has(p)).sort((a, b) => target(vectors[rowOf.get(b)]) - target(vectors[rowOf.get(a)])).slice(0, MORE);
+    return [...shown, ...more];
+}
+const mixed = (id, ko) => {
+    const top = shuffle([...ids].sort((a, b) => dot(vectors[rowOf.get(b)], starts[id].siglip2) - dot(vectors[rowOf.get(a)], starts[id].siglip2)).slice(0, 40)).slice(0, N / 2);
+    return [...top, ...engine.pickTestPins(pins, ko, N / 2, new Set(top))];
+};
+
 const STRATEGIES = {
-    '다양20': (id, ko) => engine.pickTestPins(pins, ko, N),
-    '무작위20': () => shuffle(ids).slice(0, N),
-    'AI상위20': (id) => [...ids].sort((a, b) => dot(vectors[rowOf.get(b)], starts[id].siglip2) - dot(vectors[rowOf.get(a)], starts[id].siglip2)).slice(0, N),
-    '섞기(AI상위40중10+다양10)': (id, ko) => {
-        const top = shuffle([...ids].sort((a, b) => dot(vectors[rowOf.get(b)], starts[id].siglip2) - dot(vectors[rowOf.get(a)], starts[id].siglip2)).slice(0, 40)).slice(0, N / 2);
-        return [...top, ...engine.pickTestPins(pins, ko, N / 2, new Set(top))];
+    '섞기20': mixed,
+    '섞기20+부족시12': (id, ko, says) => followUp(id, mixed(id, ko), says),
+    '섞기20+항상12': (id, ko, says) => {
+        const shown = mixed(id, ko);
+        const picked = shown.filter(says);
+        const seen = new Set(shown);
+        const target = picked.length ? (x) => Math.max(...picked.map((p) => dot(x, vectors[rowOf.get(p)]))) : (x) => dot(x, starts[id].siglip2);
+        return [...shown, ...ids.filter((p) => !seen.has(p)).sort((a, b) => target(vectors[rowOf.get(b)]) - target(vectors[rowOf.get(a)])).slice(0, MORE)];
+    },
+    '섞기40': (id, ko) => {
+        const top = shuffle([...ids].sort((a, b) => dot(vectors[rowOf.get(b)], starts[id].siglip2) - dot(vectors[rowOf.get(a)], starts[id].siglip2)).slice(0, 80)).slice(0, N);
+        return [...top, ...engine.pickTestPins(pins, ko, N, new Set(top))];
     }
 };
 const names = Object.keys(STRATEGIES);
@@ -68,7 +92,7 @@ for (const [id, marks] of Object.entries(labels)) {
     names.forEach((n) => {
         const r = [];
         for (let i = 0; i < REPEAT; i++) {
-            const shown = STRATEGIES[n](id, ko);
+            const shown = STRATEGIES[n](id, ko, says);
             const set = new Set(shown);
             r.push(agreement(learn(id, shown.filter(says), shown.filter((p) => !says(p))), yesAll.filter((p) => !set.has(p)), noAll.filter((p) => !set.has(p))));
         }

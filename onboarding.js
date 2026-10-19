@@ -24,6 +24,11 @@ const Onboarding = (() => {
     // 20장: 시뮬레이션에서 12장보다 처음 보는 사진을 훨씬 잘 맞혔다 (일치도 0.73 → 0.85, simulate-test.mjs)
     const ROUND_SIZE = 20;
     const MAX_WORDS = 5;
+    // 최소 단어 수: 이보다 적으면 그 사람의 감각 프로필이라고 하기엔 너무 적다
+    const MIN_WORDS = 3;
+    // 단어마다 첫 라운드 뒤에 붙는 "확인" 라운드 사진 수 - 첫 라운드에서 고른 사진과 닮은 사진들
+    // (시뮬레이션: 첫 라운드 20장만 0.78 → 확인 12장을 더하면 0.86, simulate-realistic.mjs)
+    const CONFIRM_SIZE = 12;
     const SUGGESTION_COUNT = 14;
     // 그중 항상 보여줄 단어 수 (테스트 추천 순서의 맨 앞)
     const FIXED_SUGGESTIONS = 8;
@@ -150,7 +155,7 @@ const Onboarding = (() => {
                 <section class="ob-step" data-step="taste-words">
                     <div class="ob-kicker">MY KEYWORDS</div>
                     <h2 class="ob-title">어떤 단어로 내 감각을 만들까요?</h2>
-                    <p class="ob-text ob-muted">마음에 드는 단어를 골라요 (최대 ${MAX_WORDS}개). 없으면 직접 써도 돼요.</p>
+                    <p class="ob-text ob-muted">마음에 드는 단어를 ${MIN_WORDS}~${MAX_WORDS}개 골라요. 없으면 직접 써도 돼요. 단어마다 두 번씩 물어봐요.</p>
                     <div class="ob-chips" data-word-chips></div>
                     <div class="ob-word-tools">
                         <button type="button" class="ob-text-btn" data-action="taste-shuffle">↻ 다른 단어 보기</button>
@@ -586,9 +591,9 @@ const Onboarding = (() => {
             tag.addEventListener('click', () => removeWord(word));
             box.appendChild(tag);
         });
-        root.querySelector('[data-action="taste-begin"]').disabled = taste.words.length === 0 || taste.pins.length < 4;
-        root.querySelector('[data-action="taste-begin"]').textContent = taste.words.length
-            ? `${taste.words.length}개 단어로 시작 →` : '시작 →';
+        root.querySelector('[data-action="taste-begin"]').disabled = taste.words.length < MIN_WORDS || taste.pins.length < 4;
+        root.querySelector('[data-action="taste-begin"]').textContent = taste.words.length >= MIN_WORDS
+            ? `${taste.words.length}개 단어로 시작 →` : `${MIN_WORDS - taste.words.length}개 더 골라요`;
     }
 
     /**
@@ -635,7 +640,7 @@ const Onboarding = (() => {
             }
             const pins = shuffle([...previous, ...fresh]);
             const preselected = new Set(previous.map((p) => p.id));
-            return { word, pins, chosen: new Set(preselected), preselected };
+            return { word, stage: 'explore', pins, chosen: new Set(preselected), preselected };
         });
         taste.roundIndex = 0;
         renderRound();
@@ -644,8 +649,11 @@ const Onboarding = (() => {
 
     function renderRound() {
         const round = taste.rounds[taste.roundIndex];
-        root.querySelector('[data-round-kicker]').textContent = `WORD ${taste.roundIndex + 1} / ${taste.rounds.length}`;
-        root.querySelector('[data-round-title]').textContent = `'${round.word}' 느낌인 이미지를 골라 보세요`;
+        const wordNo = taste.words.indexOf(round.word) + 1;
+        root.querySelector('[data-round-kicker]').textContent = `WORD ${wordNo} / ${taste.words.length}${round.stage === 'confirm' ? ' · 확인' : ''}`;
+        root.querySelector('[data-round-title]').textContent = round.stage === 'confirm'
+            ? `이 중에서도 '${round.word}' 느낌인 건?`
+            : `'${round.word}' 느낌인 이미지를 골라 보세요`;
         const grid = root.querySelector('[data-pick-grid]');
         grid.replaceChildren();
         round.pins.forEach((pin) => {
@@ -667,7 +675,8 @@ const Onboarding = (() => {
             grid.appendChild(cell);
         });
         renderPickCount();
-        root.querySelector('[data-action="taste-next"]').textContent = taste.roundIndex === taste.rounds.length - 1 ? '완료 →' : '다음 →';
+        const last = taste.roundIndex === taste.rounds.length - 1 && round.stage === 'confirm';
+        root.querySelector('[data-action="taste-next"]').textContent = last ? '완료 →' : '다음 →';
     }
 
     function renderPickCount() {
@@ -675,7 +684,38 @@ const Onboarding = (() => {
         root.querySelector('[data-pick-count]').textContent = `${round.chosen.size}장 고름`;
     }
 
-    function nextRound() {
+    /** 확인 라운드 사진: 첫 라운드에서 고른 사진과 닮은 내 핀 (분석 전이면 아직 안 보여준 핀 중 무작위) */
+    async function confirmPinsFor(round) {
+        const shownEverywhere = new Set(taste.rounds.flatMap((r) => r.pins.map((p) => p.id)));
+        const byId = new Map(taste.pins.map((p) => [p.id, p]));
+        try {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            const response = await fetch('/api/taste/confirm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session ? session.access_token : ''}` },
+                body: JSON.stringify({ word: round.word, picked: [...round.chosen], shown: [...shownEverywhere], count: CONFIRM_SIZE })
+            });
+            const data = await response.json();
+            const pins = (data.pins || []).map((id) => byId.get(id)).filter(Boolean);
+            if (response.ok && pins.length) return pins;
+        } catch (err) {
+            console.warn('확인 라운드 사진을 서버에서 고르지 못해 무작위로 고릅니다:', err);
+        }
+        return shuffle(taste.pins.filter((p) => !shownEverywhere.has(p.id))).slice(0, CONFIRM_SIZE);
+    }
+
+    async function nextRound() {
+        const round = taste.rounds[taste.roundIndex];
+        if (round.stage === 'explore' && !round.confirmAdded) {
+            round.confirmAdded = true;
+            const button = root.querySelector('[data-action="taste-next"]');
+            button.disabled = true;
+            const confirm = await confirmPinsFor(round);
+            button.disabled = false;
+            if (confirm.length) {
+                taste.rounds.splice(taste.roundIndex + 1, 0, { word: round.word, stage: 'confirm', pins: confirm, chosen: new Set(), preselected: new Set() });
+            }
+        }
         if (taste.roundIndex < taste.rounds.length - 1) {
             taste.roundIndex += 1;
             renderRound();
@@ -752,19 +792,21 @@ const Onboarding = (() => {
     function renderResult() {
         const box = root.querySelector('[data-taste-result]');
         box.replaceChildren();
-        taste.rounds.forEach((round) => {
+        // 단어마다 탐색 + 확인 두 라운드를 합쳐서 한 줄로
+        taste.words.forEach((word) => {
+            const rounds = taste.rounds.filter((r) => r.word === word);
+            const shown = rounds.flatMap((r) => r.pins);
+            const chosen = rounds.flatMap((r) => r.pins.filter((p) => r.chosen.has(p.id)));
             const row = document.createElement('div');
             row.className = 'ob-result-row';
             const head = document.createElement('div');
             head.className = 'ob-result-head';
             head.innerHTML = '<b></b><span></span>';
-            head.querySelector('b').textContent = round.word;
-            head.querySelector('span').textContent = round.chosen.size
-                ? `${round.pins.length}장 중 ${round.chosen.size}장`
-                : '고른 이미지 없음';
+            head.querySelector('b').textContent = word;
+            head.querySelector('span').textContent = chosen.length ? `${shown.length}장 중 ${chosen.length}장` : '고른 이미지 없음';
             const thumbs = document.createElement('div');
             thumbs.className = 'ob-result-thumbs';
-            round.pins.filter((p) => round.chosen.has(p.id)).slice(0, 6).forEach((pin) => {
+            chosen.slice(0, 6).forEach((pin) => {
                 const img = document.createElement('img');
                 img.src = smallImage(pin.image);
                 img.alt = '';

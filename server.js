@@ -1069,6 +1069,26 @@ app.post('/api/taste/rounds', async (req, res) => {
     } catch (error) {
         console.error('감각 테스트 문제 고르기 실패:', error.message);
         res.status(500).json({ error: '테스트 사진을 고르지 못했습니다' });
+
+/**
+ * 감각 테스트 두 번째 "확인" 라운드 사진: 첫 라운드에서 고른 사진과 닮은 사진들.
+ * body: { word, picked: [핀 id], shown: [핀 id], count: 12 } · 로그인 필요. 분석된 핀이 없으면 rounds: [] (브라우저가 무작위로)
+ */
+app.post('/api/taste/confirm', async (req, res) => {
+    try {
+        const { data: userData, error } = await supabaseForRequest(req).auth.getUser();
+        if (error || !userData.user) return res.status(401).json({ error: '로그인이 필요합니다' });
+        const word = String(req.body?.word || '').slice(0, 30);
+        const list = (v) => (Array.isArray(v) ? v.map(String).slice(0, 200) : []);
+        const count = Math.min(Math.max(parseInt(req.body?.count, 10) || 12, 4), 24);
+        const pins = await loadUserVectors(userData.user.id);
+        if (!word || pins.length < count) return res.json({ success: true, pins: [] });
+        res.json({ success: true, pins: taste().pickConfirmPins(pins, word, list(req.body?.picked), list(req.body?.shown), count) });
+    } catch (error) {
+        console.error('확인 라운드 사진 고르기 실패:', error.message);
+        res.status(500).json({ error: '확인 사진을 고르지 못했습니다' });
+    }
+});
     }
 });
 
