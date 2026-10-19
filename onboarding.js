@@ -19,7 +19,7 @@ const Onboarding = (() => {
     let foundPins = [];
     let onFinished = null;
 
-    const STEPS = ['welcome', 'request', 'download', 'upload', 'sync', 'done', 'taste-words', 'taste-round', 'taste-result'];
+    const STEPS = ['welcome', 'request', 'download', 'upload', 'sync', 'done', 'taste-words', 'taste-round', 'taste-result', 'tune-tip'];
     // 감각 테스트: 단어 하나에 보여줄 내 핀 수, 고를 수 있는 단어 수, 한 번에 보여줄 추천 단어 수
     // 20장: 시뮬레이션에서 12장보다 처음 보는 사진을 훨씬 잘 맞혔다 (일치도 0.73 → 0.85, simulate-test.mjs)
     const ROUND_SIZE = 20;
@@ -61,6 +61,8 @@ const Onboarding = (() => {
                     <h2 class="ob-title" id="ob-title">내 핀이 3D 터널이 됩니다</h2>
                     <p class="ob-text">Pinterest에 모아 둔 이미지가 끝없이 흐르는 터널이 돼요.
                     나만의 감각을 키워드로 만들어 보세요.</p>
+                    <p class="ob-text ob-muted">감각은 한 번에 정해지지 않아요. 쓰면서 검색 결과가 내 느낌과 다르면
+                    그때그때 몇 장만 골라 맞춰 갈 수 있어요.</p>
                     <p class="ob-text ob-muted" data-welcome-hint>먼저 내 핀을 가져와야 해요. Pinterest 계정을 연결하면 바로 가져와요.</p>
                     <div class="ob-status" data-welcome-status></div>
                     <div class="ob-actions">
@@ -187,13 +189,32 @@ const Onboarding = (() => {
                 <section class="ob-step" data-step="taste-result">
                     <div class="ob-kicker">MY KEYWORDS</div>
                     <h2 class="ob-title">내 감각이 키워드가 됐어요</h2>
-                    <p class="ob-text ob-muted">고른 이미지에 단어가 붙었어요. 터널에서 이 단어로 검색하면 내가 고른 이미지가 나와요.
-                    감각은 바뀌니까, 개인 페이지에서 언제든 다시 할 수 있어요.</p>
+                    <p class="ob-text ob-muted" data-result-text>고른 이미지와 안 고른 이미지로 내 감각을 배웠어요. 터널에서 이 단어로 검색하면
+                    테스트에 나오지 않은 핀까지 내 느낌대로 찾아 줘요.</p>
+                    <p class="ob-text ob-muted">감각은 쓰면서 계속 맞춰져요. 검색 결과가 내 느낌과 다르면 검색창 아래
+                    <b>'결과 다듬기'</b>를 눌러 몇 장만 더 골라 주세요. 할 때마다 더 정확해져요.</p>
                     <div class="ob-result" data-taste-result></div>
                     <div class="ob-status" data-save-status></div>
                     <div class="ob-actions">
                         <a class="ob-btn ob-btn-ghost" data-link="profile" href="#">개인 페이지 보기</a>
                         <a class="ob-btn ob-btn-primary" data-link="search" href="#">내 터널에서 검색해 보기 →</a>
+                        <button type="button" class="ob-btn ob-btn-primary hidden" data-action="close-tuned">검색 결과 다시 보기 →</button>
+                    </div>
+                </section>
+
+                <section class="ob-step" data-step="tune-tip">
+                    <div class="ob-kicker">TIP</div>
+                    <h2 class="ob-title">검색 결과가 내 느낌과 다르다면</h2>
+                    <p class="ob-text">같은 '차가운'이라도 사람마다 떠올리는 이미지가 달라요. 이 검색은 내 감각에 맞춰져 있지만,
+                    처음에는 어긋날 수 있어요.</p>
+                    <ol class="ob-list">
+                        <li>느낌 단어로 검색하면 검색창 아래에 <b>'결과 다듬기'</b>가 나와요</li>
+                        <li>누르면 그 단어로 이미지 몇 장을 보여줘요. 그 느낌인 것만 골라요 (1분 정도)</li>
+                        <li>고른 것과 안 고른 것을 함께 배워서, 검색 결과가 바로 내 감각 쪽으로 바뀌어요</li>
+                    </ol>
+                    <p class="ob-text ob-muted">할 때마다 이미 답한 이미지는 다시 묻지 않고 새로운 이미지로 물어봐요. 많이 할수록 정확해져요.</p>
+                    <div class="ob-actions">
+                        <button type="button" class="ob-btn ob-btn-primary" data-action="close-tip">알겠어요</button>
                     </div>
                 </section>
             </div>`;
@@ -209,6 +230,7 @@ const Onboarding = (() => {
             if (action === 'skip-to-upload') show(STEPS.indexOf('upload'));
             if (action === 'import') runImport();
             if (action === 'connect-pinterest') connectPinterest();
+            if (action === 'close-tuned' || action === 'close-tip') close(false);
             if (action === 'sync-retry') runPinterestSync();
             if (action === 'taste-start') startTaste();
             if (action === 'taste-shuffle') shuffleSuggestions();
@@ -510,9 +532,10 @@ const Onboarding = (() => {
         el.classList.toggle('error', isError);
     }
 
-    async function startTaste() {
+    async function startTaste(presetWords = null) {
         me = me || await loadMe();
         startAnalysis();
+        taste.tuning = !!(presetWords && presetWords.length);
         taste.words = [];
         renderSelectedWords();
         show(STEPS.indexOf('taste-words'));
@@ -530,6 +553,10 @@ const Onboarding = (() => {
             if (error) throw error;
             taste.pins = (data || []).filter((p) => p.image).map((p) => ({ id: p.id, image: p.image, customTags: p.custom_tags || [] }));
             if (taste.pins.length < 4) setTasteStatus('핀이 너무 적어요. 먼저 핀을 가져와 주세요.', true);
+            else if (taste.tuning) {
+                taste.words = presetWords.slice(0, MAX_WORDS);
+                beginRounds();
+            }
         } catch (err) {
             setTasteStatus(`내 핀을 불러오지 못했어요: ${err.message}`, true);
         }
@@ -783,6 +810,8 @@ const Onboarding = (() => {
             status.textContent = `저장하지 못했어요: ${err.message}`;
         }
 
+        root.querySelector('[data-action="close-tuned"]').classList.toggle('hidden', !taste.tuning);
+        root.querySelector('[data-link="search"]').classList.toggle('hidden', !!taste.tuning);
         const firstWord = (taste.rounds.find((r) => r.chosen.size) || taste.rounds[0]).word;
         const search = root.querySelector('[data-link="search"]');
         search.href = `gallery.html?user=${encodeURIComponent(me.username)}&q=${encodeURIComponent(firstWord)}`;
@@ -829,7 +858,11 @@ const Onboarding = (() => {
     }
 
     /** 안내를 연다. startAt: 'welcome' | 'upload' 등. onDone(가져온 개수): 다 가져온 뒤 불린다 */
-    async function open({ startAt = 'welcome', onDone = null, onTaste = null } = {}) {
+    /**
+     * startAt: 'welcome' | 'taste' | 'sync' | 'tune-tip' … · words: 'taste'로 열 때 단어를 정해 두면 단어 고르기 없이
+     * 바로 그 단어로 묻는다 (터널 검색창의 "결과 다듬기")
+     */
+    async function open({ startAt = 'welcome', onDone = null, onTaste = null, words = null } = {}) {
         if (!root) build();
         me = me || await loadMe();
         onFinished = onDone;
@@ -845,7 +878,7 @@ const Onboarding = (() => {
         resetUpload();
         applyPinterestAvailability();
         root.classList.remove('hidden');
-        if (startAt === 'taste') startTaste();
+        if (startAt === 'taste') startTaste(words);
         else show(STEPS.indexOf(startAt));
     }
 
@@ -864,5 +897,10 @@ const Onboarding = (() => {
         if (count === 0) open(options);
     }
 
-    return { open, maybeAutoOpen, afterPinterestConnect };
+    /** 결과 다듬기 안내 (터널에서 느낌 단어로 처음 검색했을 때 한 번) */
+    function showTuneTip() {
+        return open({ startAt: 'tune-tip' });
+    }
+
+    return { open, maybeAutoOpen, afterPinterestConnect, showTuneTip };
 })();

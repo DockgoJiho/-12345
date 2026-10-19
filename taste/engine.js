@@ -401,16 +401,22 @@ function userFeelTable(pins, marksByWord = {}) {
  * - 사전에 없는 단어: 서로 최대한 다른 사진들
  * 시뮬레이션(아카이브 전체에서 고르는 실제 상황, simulate-realistic.mjs, 처음 보는 사진 기준 일치도, 단어당 20장):
  *   AI 기본 0.48 · 서로 다른 0.72 · 무작위 0.72 · AI 상위 0.75(감각이 AI와 다르면 0.53까지 떨어짐) · 섞기 0.74(가장 나쁜 단어도 0.63)
- * pins: [{ key, vector }], exclude: 이미 다른 단어에서 보여준 핀 id
+ * pins: [{ key, vector }], exclude: 보여주지 않을 핀 id (다른 단어에서 이미 보여준 핀, 이 단어로 전에 답한 핀),
+ * marks: 이 단어의 지난 테스트 기록 { 핀 id: 2 | 0 } (다시 할 때)
  */
 const TOP_POOL = 40;
-function pickTestPins(pins, word, count = 20, exclude = new Set()) {
+function pickTestPins(pins, word, count = 20, exclude = new Set(), marks = {}) {
     const pool = pins.filter((p) => !exclude.has(p.key));
     if (pool.length <= count) return pool.map((p) => p.key);
+    // "상위권" = 지금 이 사람 기준으로 그 단어 같은 사진. 전에 테스트한 적이 있으면 그 기록으로 학습한 순위,
+    // 처음이면 AI 기본 해석 (다시 할 때 "지금 결과가 내 느낌과 맞나"를 직접 확인하게 된다)
+    const byKey = new Map(pins.map((p) => [p.key, p.vector]));
+    const vecsWith = (value) => Object.entries(marks).filter(([, v]) => v === value).map(([k]) => byKey.get(k)).filter(Boolean);
     const id = keywordIdOfWord(word);
-    if (!id) return pickDiverse(pool, count);
-    const start = starts[id][USER_MODEL];
-    const top = shuffleList(pool.map((p) => ({ p, s: dot(p.vector, start) })).sort((a, b) => b.s - a.s).slice(0, TOP_POOL))
+    const yes = vecsWith(YES);
+    if (!id && !yes.length) return pickDiverse(pool, count);
+    const scores = scoreVectors(pool.map((p) => p.vector), id ? starts[id][USER_MODEL] : null, yes, vecsWith(NO));
+    const top = shuffleList(pool.map((p, i) => ({ p, s: scores[i] })).sort((a, b) => b.s - a.s).slice(0, TOP_POOL))
         .slice(0, Math.floor(count / 2)).map(({ p }) => p);
     const topKeys = new Set(top.map((p) => p.key));
     const diverse = pickDiverse(pool.filter((p) => !topKeys.has(p.key)), count - top.length);

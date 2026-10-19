@@ -111,6 +111,16 @@ try {
     if (marksError) throw marksError;
     step(`감각 테스트: 단어 ${rounds.rounds.length}개 × (${rounds.rounds[0].pins.length}장 + 확인 12장), 고른 사진 ${marks.filter((m) => m.value === 2).length}장 / ${marks.length}장`);
 
+    // 4-2) 결과 다듬기(다시 하기): 같은 단어로 다시 물으면, 이미 답한 핀은 나오지 않아야 한다
+    const againRes = await fetch(`${SITE}/api/taste/rounds`, {
+        method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ words: [WORDS[0]], perWord: 20 })
+    });
+    const again = await againRes.json();
+    const answered = new Set(marks.filter((m) => m.word === WORDS[0]).map((m) => m.pin_id));
+    const repeated = (again.rounds?.[0]?.pins || []).filter((id) => answered.has(id)).length;
+    step(`다시 하기('${WORDS[0]}'): 새 사진 ${again.rounds?.[0]?.pins.length || 0}장, 이미 답한 사진 ${repeated}장${repeated ? ' ← 문제' : ''}`);
+    if (repeated) throw new Error('다시 하기에서 이미 답한 사진이 다시 나왔다');
+
     // 5) 실제 사이트에서 그 사람 터널로 검색
     const t5 = Date.now();
     const index = await (await fetch(`${SITE}/api/search/index?user=${username}`)).json();

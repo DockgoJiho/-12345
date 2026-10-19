@@ -1438,6 +1438,33 @@ class ParticleGallery {
             strong.textContent = words.join('·');
             this.searchUnderstoodEl.append(`${label} `, strong);
         });
+        this.renderTuneButton(understood.feel || []);
+    }
+
+    /**
+     * 내 터널에서 느낌 단어로 검색했으면 "결과 다듬기": 그 단어로 짧은 감각 테스트를 해서
+     * 검색 결과를 내 감각 쪽으로 맞춘다 (onboarding.js). 처음 한 번은 방법을 안내한다.
+     */
+    renderTuneButton(feelWords) {
+        if (!feelWords.length || !this.isViewingOwnTunnel() || typeof Onboarding === 'undefined') return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'search-tune-btn';
+        button.textContent = `'${feelWords.join('·')}' 결과 다듬기`;
+        button.title = '그 느낌인 이미지를 몇 장 고르면, 검색 결과가 내 감각 쪽으로 맞춰져요';
+        button.addEventListener('click', () => {
+            Onboarding.open({
+                startAt: 'taste',
+                words: feelWords,
+                // 다 고르면 내 감각 점수표가 바뀌므로 검색 색인을 새로 받고 같은 검색을 다시 보여준다
+                onTaste: () => this.loadSearchIndex()
+            });
+        });
+        this.searchUnderstoodEl.append(button);
+
+        let seen = false;
+        try { seen = !!localStorage.getItem('tuneTipSeen'); localStorage.setItem('tuneTipSeen', '1'); } catch (e) { seen = true; }
+        if (!seen) Onboarding.showTuneTip();
     }
 
     /**

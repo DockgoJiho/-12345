@@ -1057,11 +1057,13 @@ app.post('/api/taste/rounds', async (req, res) => {
         if (error || !userData.user) return res.status(401).json({ error: '로그인이 필요합니다' });
         const words = (Array.isArray(req.body?.words) ? req.body.words : []).map((w) => String(w).slice(0, 30)).filter(Boolean).slice(0, 10);
         const perWord = Math.min(Math.max(parseInt(req.body?.perWord, 10) || 20, 4), 24);
-        const pins = await loadUserVectors(userData.user.id);
+        const [pins, pastMarks] = await Promise.all([loadUserVectors(userData.user.id), loadUserMarks(userData.user.id)]);
         if (pins.length < perWord) return res.json({ success: true, analyzed: pins.length, rounds: [] });
         const shown = new Set();
         const rounds = words.map((word) => {
-            const picked = taste().pickTestPins(pins, word, perWord, shown);
+            // 다시 하는 경우: 이 단어로 이미 답한 핀은 다시 묻지 않고, 지난 답으로 학습한 순위로 "상위권"을 고른다
+            const past = pastMarks[word] || {};
+            const picked = taste().pickTestPins(pins, word, perWord, new Set([...shown, ...Object.keys(past)]), past);
             picked.forEach((id) => shown.add(id));
             return { word, pins: picked };
         });
@@ -1083,9 +1085,11 @@ app.post('/api/taste/confirm', async (req, res) => {
         const word = String(req.body?.word || '').slice(0, 30);
         const list = (v) => (Array.isArray(v) ? v.map(String).slice(0, 200) : []);
         const count = Math.min(Math.max(parseInt(req.body?.count, 10) || 12, 4), 24);
-        const pins = await loadUserVectors(userData.user.id);
+        const [pins, pastMarks] = await Promise.all([loadUserVectors(userData.user.id), loadUserMarks(userData.user.id)]);
         if (!word || pins.length < count) return res.json({ success: true, pins: [] });
-        res.json({ success: true, pins: taste().pickConfirmPins(pins, word, list(req.body?.picked), list(req.body?.shown), count) });
+        // 이 단어로 전에 답한 핀도 다시 묻지 않는다
+        const shown = [...list(req.body?.shown), ...Object.keys(pastMarks[word] || {})];
+        res.json({ success: true, pins: taste().pickConfirmPins(pins, word, list(req.body?.picked), shown, count) });
     } catch (error) {
         console.error('확인 라운드 사진 고르기 실패:', error.message);
         res.status(500).json({ error: '확인 사진을 고르지 못했습니다' });

@@ -448,6 +448,24 @@ canvas {
     display: none;
 }
 
+.search-tune-btn {
+    display: block;
+    margin-top: 6px;
+    background: none;
+    border: 1px solid #1a1a1a;
+    border-radius: 12px;
+    padding: 3px 10px;
+    font: inherit;
+    font-size: 11px;
+    color: #1a1a1a;
+    cursor: pointer;
+}
+
+.search-tune-btn:hover {
+    background: #1a1a1a;
+    color: #fff;
+}
+
 .search-understood b {
     color: #1a1a1a;
     font-weight: 600;
