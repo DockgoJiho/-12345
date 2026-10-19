@@ -92,9 +92,24 @@ try {
         owner_id: userId, word: r.word, pin_id: pinId,
         value: labels[WORD_IDS[r.word]]?.[sourceOfPin.get(pinId)] === 2 ? 2 : 0
     })));
+    // 확인 라운드: 첫 라운드에서 고른 사진과 닮은 사진 12장을 받아 같은 방식으로 답한다
+    const shownAll = marks.map((m) => m.pin_id);
+    for (const r of rounds.rounds) {
+        const picked = marks.filter((m) => m.word === r.word && m.value === 2).map((m) => m.pin_id);
+        const confirmRes = await fetch(`${SITE}/api/taste/confirm`, {
+            method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word: r.word, picked, shown: shownAll, count: 12 })
+        });
+        const confirm = await confirmRes.json();
+        if (!confirmRes.ok || !confirm.pins || !confirm.pins.length) throw new Error(`확인 라운드 실패: ${confirmRes.status} ${JSON.stringify(confirm)}`);
+        confirm.pins.forEach((pinId) => {
+            shownAll.push(pinId);
+            marks.push({ owner_id: userId, word: r.word, pin_id: pinId, value: labels[WORD_IDS[r.word]]?.[sourceOfPin.get(pinId)] === 2 ? 2 : 0 });
+        });
+    }
     const { error: marksError } = await user.from('taste_marks').upsert(marks, { onConflict: 'owner_id,word,pin_id' });
     if (marksError) throw marksError;
-    step(`감각 테스트: 단어 ${rounds.rounds.length}개 × ${rounds.rounds[0].pins.length}장, 고른 사진 ${marks.filter((m) => m.value === 2).length}장`);
+    step(`감각 테스트: 단어 ${rounds.rounds.length}개 × (${rounds.rounds[0].pins.length}장 + 확인 12장), 고른 사진 ${marks.filter((m) => m.value === 2).length}장 / ${marks.length}장`);
 
     // 5) 실제 사이트에서 그 사람 터널로 검색
     const t5 = Date.now();

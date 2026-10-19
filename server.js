@@ -1069,6 +1069,8 @@ app.post('/api/taste/rounds', async (req, res) => {
     } catch (error) {
         console.error('감각 테스트 문제 고르기 실패:', error.message);
         res.status(500).json({ error: '테스트 사진을 고르지 못했습니다' });
+    }
+});
 
 /**
  * 감각 테스트 두 번째 "확인" 라운드 사진: 첫 라운드에서 고른 사진과 닮은 사진들.
@@ -1087,8 +1089,6 @@ app.post('/api/taste/confirm', async (req, res) => {
     } catch (error) {
         console.error('확인 라운드 사진 고르기 실패:', error.message);
         res.status(500).json({ error: '확인 사진을 고르지 못했습니다' });
-    }
-});
     }
 });
 
