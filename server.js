@@ -984,21 +984,39 @@ function userFeelTableCached(ownerId, version) {
  * 기본 아카이브 주인의 점수표: 처음 아카이브(taste/data, 두 모델로 분석)에 더해, 그 밖의 핀(Pinterest 동기화로 들어온 핀 등)은
  * pin_embeddings에 올라온 SigLIP 2 벡터로 채점해 붙인다. 버전이 같으면 다시 만들지 않는다.
  */
-const ownerFeelCache = new Map();
+const ownerFeel = { key: null, pending: null, ready: null }; // ready: { key, table } - 마지막으로 다 만든 점수표
 function ownerFeelTableCached(ownerId, version) {
     const key = `${ownerId}:${version}`;
-    if (!ownerFeelCache.has(key)) {
-        const value = (async () => {
+    if (ownerFeel.ready && ownerFeel.ready.key === key) return { table: ownerFeel.ready.table, fresh: true };
+    if (ownerFeel.key !== key) {
+        ownerFeel.key = key;
+        ownerFeel.pending = (async () => {
             const engine = taste();
             const [vectors, rows] = await Promise.all([loadUserVectors(ownerId), fetchOwnerPinsCached(ownerId)]);
             const inArchive = new Set(rows.filter((row) => row.source_pin_id && engine.isAnalyzed(row.source_pin_id)).map((row) => row.id));
-            return engine.feelTable('owner', vectors.filter((v) => !inArchive.has(v.key)));
+            const table = engine.feelTable('owner', vectors.filter((v) => !inArchive.has(v.key)));
+            if (ownerFeel.key === key) ownerFeel.ready = { key, table };
+            return table;
         })();
-        value.catch(() => ownerFeelCache.delete(key));
-        ownerFeelCache.clear();
-        ownerFeelCache.set(key, value);
+        ownerFeel.pending.catch((error) => {
+            console.error('주인 점수표 실패:', error.message);
+            if (ownerFeel.key === key) ownerFeel.key = null;
+        });
     }
-    return ownerFeelCache.get(key);
+    // 새 핀이 분석돼서 다시 만드는 중이면, 기다리게 하지 않고 직전 점수표로 먼저 답한다 (캐시는 하지 않게)
+    if (ownerFeel.ready) return { table: ownerFeel.ready.table, fresh: false };
+    return ownerFeel.pending.then((table) => ({ table, fresh: true }));
+}
+
+/** 서버가 켜질 때 기본 아카이브 주인의 점수표를 미리 만들어 둔다 (첫 방문자가 기다리지 않게) */
+async function warmOwnerFeelTable() {
+    try {
+        const owner = await resolveOwnerCached(DEFAULT_ARCHIVE_USERNAME);
+        const version = owner && await userFeelVersion(owner.id);
+        if (version) await ownerFeelTableCached(owner.id, version);
+    } catch (error) {
+        console.error('주인 점수표 미리 만들기 실패:', error.message);
+    }
 }
 
 app.get('/api/taste/test', (req, res) => {
@@ -1070,8 +1088,8 @@ app.get('/api/search/feel', async (req, res) => {
             const archiveOwner = await resolveOwnerCached(DEFAULT_ARCHIVE_USERNAME);
             const version = archiveOwner && archiveOwner.id === req.query.owner ? await userFeelVersion(archiveOwner.id) : null;
             if (version) {
-                const table = await ownerFeelTableCached(archiveOwner.id, version);
-                res.set('Cache-Control', req.query.v === version ? 'public, max-age=86400' : 'no-cache');
+                const { table, fresh } = await ownerFeelTableCached(archiveOwner.id, version);
+                res.set('Cache-Control', fresh && req.query.v === version ? 'public, max-age=86400' : 'no-cache');
                 return res.json({ success: true, ...table, version });
             }
         }
@@ -1189,6 +1207,7 @@ app.listen(PORT, () => {
 
     // 느낌 키워드 점수는 처음 검색될 때 계산하면 무료 서버에서 몇 초씩 걸린다 - 켜지자마자 틈틈이 미리 계산해 둔다
     taste().warmUp();
+    setTimeout(warmOwnerFeelTable, 5000);
 });
 
 module.exports = app;

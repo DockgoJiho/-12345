@@ -32,7 +32,9 @@ const indexes = Object.fromEntries(MODELS.map((m) => [m, loadIndex(m)]));
 const canonicalOf = readJson('duplicates.json');
 // 거의 같은 이미지는 대표 핀 하나만 결과에 남긴다
 const uniqueIds = indexes.siglip2.ids.filter((id) => canonicalOf[id] === id);
-const starts = readJson('keyword_vectors.json');
+// 키워드 시작점 (모델별 텍스트 벡터) - 계산이 빠르도록 Float32Array로
+const starts = Object.fromEntries(Object.entries(readJson('keyword_vectors.json'))
+    .map(([id, byModel]) => [id, Object.fromEntries(Object.entries(byModel).map(([m, v]) => [m, Float32Array.from(v)]))]));
 const KEYWORDS = readJson('keywords.json');
 const SUBJECTS = readJson('subjects.json');
 const subjectScores = readJson('subject_scores.json');
@@ -54,7 +56,15 @@ function normalize(v) {
     return v.map((x) => x / n);
 }
 
-const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+// 점수표를 만들 때 수천 장 × 수백 개 단어만큼 불리므로 네 칸씩 묶어 계산한다 (둘 다 Float32Array일 때 가장 빠르다)
+function dot(a, b) {
+    let s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+    const n = a.length - (a.length % 4);
+    let i = 0;
+    for (; i < n; i += 4) { s0 += a[i] * b[i]; s1 += a[i + 1] * b[i + 1]; s2 += a[i + 2] * b[i + 2]; s3 += a[i + 3] * b[i + 3]; }
+    for (; i < a.length; i++) s0 += a[i] * b[i];
+    return s0 + s1 + s2 + s3;
+}
 const vecAt = (index, row) => index.data.subarray(row * index.dim, (row + 1) * index.dim);
 
 function zscore(values) {
