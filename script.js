@@ -1225,9 +1225,12 @@ class ParticleGallery {
         }
     }
 
-    /** 내 터널에서 단어 감각 테스트 결과를 기준으로 검색할 때는 점수를 새로 계산해야 해서 서버에 묻는다 */
+    /**
+     * 색인을 받았으면 항상 브라우저에서 검색한다. 감각 테스트 결과는 서버 점수표(taste_marks 기반)에 이미 들어 있다.
+     * (예전 taste-test.html이 이 브라우저에 남긴 결과 때문에 서버 검색으로 넘어가면 사물·대상 검색과 새로 분석한 핀이 빠진다)
+     */
     canSearchLocally() {
-        return !!this.searchLocal && !(this.isViewingOwnTunnel() && this.readTasteMarks());
+        return !!this.searchLocal;
     }
 
     /** 메모·키워드를 고치거나 핀을 지우면 브라우저 색인에도 바로 반영한다 (patch가 null이면 삭제) */
