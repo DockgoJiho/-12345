@@ -38,6 +38,14 @@ write('keywords.json', KEYWORDS.map(({ id, ko, group, synonyms }) => ({ id, ko, 
 write('keyword_vectors.json', Object.fromEntries(KEYWORDS.map((k) => [k.id, vectors[k.id]])));
 write('subjects.json', SUBJECTS.map(({ id, ko, threshold, synonyms }) => ({ id, ko, threshold, synonyms })));
 
+// 사물·대상 사전 (build-concepts.mjs) - 텍스트 벡터는 Float32를 base64로 줄여서
+const concepts = JSON.parse(fs.readFileSync(path.join(OUT, 'concept_vectors.json'), 'utf8'));
+write('concepts.json', {
+    logitScale: concepts.logitScale, logitBias: concepts.logitBias, minProbability: concepts.minProbability,
+    concepts: concepts.concepts,
+    vectors: Object.fromEntries(Object.entries(concepts.vectors).map(([id, v]) => [id, Buffer.from(Float32Array.from(v).buffer).toString('base64')]))
+});
+
 // 아카이브 주인(나)의 라벨 - 사이트에서는 읽기 전용 기준으로 쓴다
 fs.copyFileSync(path.join(HERE, 'keyword_labels.json'), path.join(DEST, 'owner_labels.json'));
 

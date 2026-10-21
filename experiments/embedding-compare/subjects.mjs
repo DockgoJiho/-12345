@@ -25,7 +25,7 @@ export const CATEGORIES = {
 
 export const SUBJECTS = [
     { id: 'person', ko: '사람', threshold: 0.7, categories: ['fashion_photo', 'portrait'],
-        synonyms: ['사람', '인물', '얼굴', '포트레이트', '셀카'] },
+        synonyms: ['사람', '인물', '포트레이트', '셀카'] },
     { id: 'clothing', ko: '옷', threshold: 0.5, categories: ['fashion_photo', 'clothing_item'],
         synonyms: ['옷', '패션', '의류', '코디', '룩북', '스트릿', '착장'] },
     { id: 'food', ko: '음식', threshold: 0.5, categories: ['food'],

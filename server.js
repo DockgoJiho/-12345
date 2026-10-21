@@ -980,6 +980,27 @@ function userFeelTableCached(ownerId, version) {
     return userFeelCache.get(key);
 }
 
+/**
+ * 기본 아카이브 주인의 점수표: 처음 아카이브(taste/data, 두 모델로 분석)에 더해, 그 밖의 핀(Pinterest 동기화로 들어온 핀 등)은
+ * pin_embeddings에 올라온 SigLIP 2 벡터로 채점해 붙인다. 버전이 같으면 다시 만들지 않는다.
+ */
+const ownerFeelCache = new Map();
+function ownerFeelTableCached(ownerId, version) {
+    const key = `${ownerId}:${version}`;
+    if (!ownerFeelCache.has(key)) {
+        const value = (async () => {
+            const engine = taste();
+            const [vectors, rows] = await Promise.all([loadUserVectors(ownerId), fetchOwnerPinsCached(ownerId)]);
+            const inArchive = new Set(rows.filter((row) => row.source_pin_id && engine.isAnalyzed(row.source_pin_id)).map((row) => row.id));
+            return engine.feelTable('owner', vectors.filter((v) => !inArchive.has(v.key)));
+        })();
+        value.catch(() => ownerFeelCache.delete(key));
+        ownerFeelCache.clear();
+        ownerFeelCache.set(key, value);
+    }
+    return ownerFeelCache.get(key);
+}
+
 app.get('/api/taste/test', (req, res) => {
     res.json({ success: true, keywords: taste().testQuestions() });
 });
@@ -1006,12 +1027,17 @@ app.get('/api/search/index', async (req, res) => {
         // 느낌 검색 기준: 기본 아카이브는 주인이 직접 붙인 라벨, 다른 사람은 그 사람이 분석·테스트한 결과
         // (아직 분석 전이면 기본 아카이브와 겹치는 핀에 한해 AI 기본 해석)
         const isDefaultArchive = owner.username === DEFAULT_ARCHIVE_USERNAME;
-        const userVersion = isDefaultArchive ? null : await userFeelVersion(owner.id);
-        const feel = isDefaultArchive ? { basis: 'owner', version: engine.DATA_VERSION }
+        const userVersion = await userFeelVersion(owner.id);
+        // 기본 아카이브 주인: 처음 아카이브 밖의 핀도 분석돼 있으면(userVersion) 그것까지 합친 점수표
+        const feel = isDefaultArchive ? (userVersion ? { basis: 'owner', owner: owner.id, version: userVersion } : { basis: 'owner', version: engine.DATA_VERSION })
             : userVersion ? { basis: 'user', owner: owner.id, version: userVersion }
                 : { basis: 'ai', version: engine.DATA_VERSION };
-        // feelKey: 점수표에서 이 핀을 찾는 키 - 기본 아카이브 점수표는 Pinterest 원본 id, 사람별 점수표는 핀 id
-        const feelKey = (row) => (feel.basis === 'user' ? row.id : row.source_pin_id || null);
+        // feelKey: 점수표에서 이 핀을 찾는 키 - 처음 아카이브 핀은 Pinterest 원본 id, 그 밖(사람별 점수표·주인의 새 핀)은 핀 id
+        const feelKey = (row) => {
+            if (feel.basis === 'user') return row.id;
+            if (row.source_pin_id && engine.isAnalyzed(row.source_pin_id)) return row.source_pin_id;
+            return feel.basis === 'owner' && feel.owner ? row.id : row.source_pin_id || null;
+        };
         res.json({
             success: true,
             owner: { id: owner.id, username: owner.username },
@@ -1039,6 +1065,16 @@ app.get('/api/search/feel', async (req, res) => {
             return res.json({ success: true, version, ...table });
         }
         const basis = req.query.basis === 'owner' ? 'owner' : 'ai';
+        if (basis === 'owner' && req.query.owner) {
+            // 기본 아카이브 주인인지 확인하고(아무 id로나 주인 기준 점수표를 만들게 하지 않는다) 새 핀까지 합친 점수표
+            const archiveOwner = await resolveOwnerCached(DEFAULT_ARCHIVE_USERNAME);
+            const version = archiveOwner && archiveOwner.id === req.query.owner ? await userFeelVersion(archiveOwner.id) : null;
+            if (version) {
+                const table = await ownerFeelTableCached(archiveOwner.id, version);
+                res.set('Cache-Control', req.query.v === version ? 'public, max-age=86400' : 'no-cache');
+                return res.json({ success: true, ...table, version });
+            }
+        }
         res.set('Cache-Control', 'public, max-age=86400');
         res.json({ success: true, ...taste().feelTable(basis) });
     } catch (error) {

@@ -21,10 +21,11 @@
     /**
      * 느낌 키워드·주제 목록으로 검색어 해석기를 만든다. 정규식은 여기서 한 번만 만들어 둔다
      * (타이핑할 때마다 수백 개를 새로 만들면 느려진다).
-     * vocab: { keywords: [{ id, synonyms }], subjects: [{ id, synonyms }] }
+     * vocab: { keywords: [{ id, synonyms }], subjects: [{ id, synonyms }], concepts: [{ id, synonyms }] }
      */
     function createQueryParser(vocab) {
-        const subjectRules = vocab.subjects
+        // 낱말 하나로 된 주제어·대상어: "옷"/"얼굴" → include, "사람 없는"/"얼굴 빼고" → exclude
+        const nounRules = (list) => list
             .flatMap((s) => s.synonyms.map((syn) => [syn.toLowerCase(), s.id]))
             .sort((a, b) => b[0].length - a[0].length)
             .map(([syn, id]) => {
@@ -37,6 +38,8 @@
                     plainAll: new RegExp(`${word}${PARTICLE}(?=$|[^\\p{L}\\p{N}])`, 'gu')
                 };
             });
+        const subjectRules = nounRules(vocab.subjects);
+        const conceptRules = nounRules(vocab.concepts || []);
 
         // 같은 표현이 키워드 여러 개에 연결될 수 있다
         const idsOf = new Map();
@@ -53,11 +56,10 @@
                 atAll: new RegExp(`${WORD_START}${escape(syn)}[\\p{L}\\p{N}]*`, 'gu')
             }));
 
-        /** "옷" → include, "사람 없는" / "옷 빼고" → exclude. 찾은 주제어는 지워서 rest로 돌려준다 */
-        function parseSubjects(text) {
+        function parseNouns(rules, text) {
             let rest = text.toLowerCase();
             const include = [], exclude = [];
-            for (const rule of subjectRules) {
+            for (const rule of rules) {
                 if (rule.negated.test(rest)) {
                     if (!exclude.includes(rule.id)) exclude.push(rule.id);
                     rest = rest.replace(rule.negatedAll, '$1 ');
@@ -68,6 +70,11 @@
             }
             return { include, exclude, rest };
         }
+        /** "옷" → include, "사람 없는" / "옷 빼고" → exclude. 찾은 주제어는 지워서 rest로 돌려준다 */
+        const parseSubjects = (text) => parseNouns(subjectRules, text);
+        /** 사물·대상 ("얼굴", "고양이 빼고") - 주제어·느낌 키워드로 못 알아들은 나머지에서 찾는다 */
+        const parseConcepts = (text) => parseNouns(conceptRules, text);
+        const unknownWords = (rest) => rest.split(/[\s,./·+&]+/).filter((t) => t.length >= 2 && !FILLER.has(t));
 
         function parseKeywords(text) {
             let rest = text.toLowerCase();
@@ -78,11 +85,10 @@
                     rest = rest.replace(rule.atAll, '$1 ');
                 }
             }
-            const unknown = rest.split(/[\s,./·+&]+/).filter((t) => t.length >= 2 && !FILLER.has(t));
-            return { ids, unknown };
+            return { ids, unknown: unknownWords(rest), rest };
         }
 
-        return { parseSubjects, parseKeywords };
+        return { parseSubjects, parseKeywords, parseConcepts, unknownWords };
     }
 
     /**
@@ -132,6 +138,7 @@
     }
 
     const RESULT_LIMIT = 60;
+    const NO_HITS = new Map();
 
     /**
      * 서버가 보내 준 점수표(base64)를 계산하기 좋은 모양으로 푼다.
@@ -142,24 +149,36 @@
         const int16 = (b64) => { const bytes = decodeBase64(b64); return new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2); };
         const uint16 = (b64) => { const bytes = decodeBase64(b64); return new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2); };
         const rowOf = new Map(table.ids.map((id, i) => [id, i]));
-        const scores = {}, subjects = {}, rejected = {};
+        const scores = {}, subjects = {}, rejected = {}, concepts = {};
         Object.entries(table.scores).forEach(([k, b64]) => { scores[k] = int16(b64); });
+        // 사물·대상: 그 대상이 있는 행 → 점수 (없는 행은 Map에 없다)
+        Object.entries(table.concepts || {}).forEach(([c, hit]) => {
+            const rowBytes = decodeBase64(hit.rows);
+            const rows = new Uint32Array(rowBytes.buffer.slice(rowBytes.byteOffset, rowBytes.byteOffset + rowBytes.length));
+            const values = int16(hit.scores);
+            concepts[c] = new Map(Array.from(rows, (row, i) => [row, values[i]]));
+        });
         Object.entries(table.subjects).forEach(([s, b64]) => { subjects[s] = uint16(b64); });
         Object.entries(table.rejected || {}).forEach(([k, pins]) => { rejected[k] = new Set(pins); });
         const thresholds = {};
         Object.entries(table.thresholds).forEach(([s, t]) => { thresholds[s] = Math.ceil(t * 65535 - 1e-6); });
         return {
             ids: table.ids,
-            labels: table.labels,
+            labels: { concepts: {}, ...table.labels },
             rowOf,
             uniqueRows: table.unique,
             scores,
             subjects,
             thresholds,
             rejected,
+            concepts,
             hasSubject: (subjectId, pinId) => {
                 const row = rowOf.get(pinId);
                 return row !== undefined && subjects[subjectId][row] >= thresholds[subjectId];
+            },
+            hasConcept: (conceptId, pinId) => {
+                const row = rowOf.get(pinId);
+                return row !== undefined && !!concepts[conceptId] && concepts[conceptId].has(row);
             }
         };
     }
@@ -175,45 +194,68 @@
         const analyzed = new Map();
         if (feel) docs.forEach((d) => { if (d.feelKey && feel.rowOf.has(d.feelKey)) analyzed.set(d.feelKey, d); });
 
-        let feelResult = { keywords: [], include: [], exclude: [], unknown: keywords, pins: [] };
+        let feelResult = { keywords: [], include: [], exclude: [], conceptInclude: [], conceptExclude: [], unknown: keywords, pins: [] };
         if (analyzed.size) {
+            // 순서: 주제어("옷", "사람 없는") → 느낌 키워드("차가운") → 사물·대상("얼굴", "고양이 빼고") → 남은 말은 글자 검색
             const subjects = parser.parseSubjects(rawQuery);
             const include = subjects.include;
             const exclude = subjects.exclude.filter((id) => !include.includes(id));
-            const { ids, unknown } = parser.parseKeywords(subjects.rest);
+            const parsedKeywords = parser.parseKeywords(subjects.rest);
+            const ids = parsedKeywords.ids;
+            const nouns = parser.parseConcepts(parsedKeywords.rest);
+            const conceptInclude = nouns.include.filter((id) => feel.labels.concepts[id]);
+            const conceptExclude = nouns.exclude.filter((id) => feel.labels.concepts[id] && !conceptInclude.includes(id));
+            const unknown = parser.unknownWords(nouns.rest);
+            const hits = (c) => feel.concepts[c] || NO_HITS;
             const rejected = new Set();
             ids.forEach((id) => { (feel.rejected[id] || new Set()).forEach((pin) => rejected.add(pin)); });
             const allowedRow = (row) => {
                 const pin = feel.ids[row];
                 return analyzed.has(pin) && !rejected.has(pin)
                     && include.every((s) => feel.subjects[s][row] >= feel.thresholds[s])
-                    && !exclude.some((s) => feel.subjects[s][row] >= feel.thresholds[s]);
+                    && !exclude.some((s) => feel.subjects[s][row] >= feel.thresholds[s])
+                    && conceptInclude.every((c) => hits(c).has(row))
+                    && !conceptExclude.some((c) => hits(c).has(row));
             };
+            const rankBy = (scoreOfRow) => feel.uniqueRows.filter(allowedRow).map((row) => ({ row, score: scoreOfRow(row) }));
 
             let ranked = [];
             if (ids.length) {
                 const tables = ids.map((id) => feel.scores[id]);
-                ranked = feel.uniqueRows.filter(allowedRow)
-                    .map((row) => { let s = Infinity; tables.forEach((t) => { if (t[row] < s) s = t[row]; }); return { row, score: s }; });
+                ranked = rankBy((row) => { let s = Infinity; tables.forEach((t) => { if (t[row] < s) s = t[row]; }); return s; });
+            } else if (conceptInclude.length) {
+                // 느낌 키워드 없이 대상만 쓴 경우 ("얼굴") - 그 대상이 있을 확률이 높은 순서대로
+                ranked = rankBy((row) => Math.min(...conceptInclude.map((c) => hits(c).get(row))));
             } else if (include.length) {
                 // 느낌 키워드 없이 주제만 쓴 경우 ("옷") - 그 주제가 확실한 순서대로
-                ranked = feel.uniqueRows.filter(allowedRow)
-                    .map((row) => { let s = Infinity; include.forEach((sub) => { if (feel.subjects[sub][row] < s) s = feel.subjects[sub][row]; }); return { row, score: s }; });
+                ranked = rankBy((row) => { let s = Infinity; include.forEach((sub) => { if (feel.subjects[sub][row] < s) s = feel.subjects[sub][row]; }); return s; });
             }
             ranked.sort((a, b) => b.score - a.score);
             feelResult = {
                 keywords: ids,
                 include,
                 exclude,
+                conceptInclude,
+                conceptExclude,
                 unknown,
                 pins: ranked.slice(0, RESULT_LIMIT).map(({ row, score }) => ({ id: feel.ids[row], score }))
             };
         }
 
-        const feelActive = feelResult.keywords.length > 0 || feelResult.include.length > 0;
+        const feelActive = feelResult.keywords.length > 0 || feelResult.include.length > 0 || feelResult.conceptInclude.length > 0;
         // 감각 검색이 알아듣지 못한 나머지 말은 글자 검색으로 찾는다 (아무것도 못 알아들었으면 검색어 전체)
-        const textKeywords = feelActive || feelResult.exclude.length ? feelResult.unknown : keywords;
-        const excluded = (d) => d.feelKey && feelResult.exclude.some((s) => feel.hasSubject(s, d.feelKey));
+        const textKeywords = feelActive || feelResult.exclude.length || feelResult.conceptExclude.length ? feelResult.unknown : keywords;
+        const excluded = (d) => d.feelKey && (feelResult.exclude.some((s) => feel.hasSubject(s, d.feelKey))
+            || feelResult.conceptExclude.some((c) => feel.hasConcept(c, d.feelKey)));
+        const textSearch = (words) => {
+            const found = [];
+            docs.forEach((d) => {
+                if (excluded(d)) return;
+                const score = scoreTextMatch(d.doc, words);
+                if (score !== null) found.push({ d, score });
+            });
+            return found.sort((a, b) => b.score - a.score);
+        };
 
         let ranked;
         if (feelActive) {
@@ -233,16 +275,10 @@
                 ranked = [...ownPicks.map((d) => ({ d, score: Infinity })), ...ranked.filter(({ d }) => !picked.has(d))];
             }
         } else {
-            ranked = [];
-            if (textKeywords.length) {
-                docs.forEach((d) => {
-                    if (excluded(d)) return;
-                    const score = scoreTextMatch(d.doc, textKeywords);
-                    if (score !== null) ranked.push({ d, score });
-                });
-                ranked.sort((a, b) => b.score - a.score);
-            }
+            ranked = textKeywords.length ? textSearch(textKeywords) : [];
         }
+        // 대상("고양이")이 사진에서 하나도 안 보이면, 제목·메모·키워드에 그 말이 있는 핀이라도 찾는다
+        if (!ranked.length && feelResult.conceptInclude.length && !feelResult.keywords.length) ranked = textSearch(keywords);
 
         return {
             query: rawQuery,
@@ -251,8 +287,8 @@
             // 검색어를 어떻게 알아들었는지 (검색창 아래에 표시)
             understood: {
                 feel: feelResult.keywords.map((id) => feel.labels.keywords[id]),
-                include: feelResult.include.map((id) => feel.labels.subjects[id]),
-                exclude: feelResult.exclude.map((id) => feel.labels.subjects[id]),
+                include: [...feelResult.include.map((id) => feel.labels.subjects[id]), ...feelResult.conceptInclude.map((id) => feel.labels.concepts[id])],
+                exclude: [...feelResult.exclude.map((id) => feel.labels.subjects[id]), ...feelResult.conceptExclude.map((id) => feel.labels.concepts[id])],
                 text: textKeywords
             },
             pins: ranked.slice(0, RESULT_LIMIT).map(({ d }) => d.pin)

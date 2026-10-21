@@ -66,6 +66,8 @@ create policy "users delete own taste marks" on public.taste_marks
 --    누가 어떤 행을 읽고 쓸 수 있는지는 위의 정책(RLS)이 정한다. 새 테이블에 권한이 자동으로 붙지 않는 프로젝트가 있다
 grant select on public.pin_embeddings, public.taste_marks to anon, authenticated;
 grant insert, update, delete on public.pin_embeddings, public.taste_marks to authenticated;
+-- 관리용 스크립트(서비스 키 - 기본 아카이브 핀 일괄 분석, 실사이트 점검)가 쓸 수 있게
+grant all on public.pin_embeddings, public.taste_marks to service_role;
 
 -- 4) Supabase API가 새 테이블을 바로 알아보도록 테이블 목록(schema cache)을 새로 읽게 한다
 notify pgrst, 'reload schema';

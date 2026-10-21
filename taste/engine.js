@@ -38,6 +38,14 @@ const SUBJECTS = readJson('subjects.json');
 const subjectScores = readJson('subject_scores.json');
 const testSet = readJson('test_set.json');
 const ownerLabels = readJson('owner_labels.json');
+// 사물·대상 사전 (얼굴, 고양이, 의자 …) - SigLIP 2의 "이 사진과 이 말이 맞을 확률"로 판별한다 (build-concepts.mjs)
+const conceptData = readJson('concepts.json');
+const CONCEPTS = conceptData.concepts;
+const conceptVecs = CONCEPTS.map((c) => {
+    const bytes = Buffer.from(conceptData.vectors[c.id], 'base64');
+    return new Float32Array(bytes.buffer, bytes.byteOffset, bytes.length / 4);
+});
+const CONCEPT_MIN_LOGIT = Math.log(conceptData.minProbability / (1 - conceptData.minProbability));
 
 function normalize(v) {
     let sum = 0;
@@ -91,6 +99,9 @@ function trainClassifier(dim, yesVecs, noVecs) {
  *   (실험: 학습에 안 쓴 사진 기준 일치도 평균 0.70 → 0.92, experiments/embedding-compare/holdout.mjs)
  * - 적으면: AI 기본 해석에서 출발해 맞아 쪽으로 당기고 아니야에서 밀어낸 방향 하나
  */
+// 기본 아카이브 주인의 라벨로 학습한 경계만 기억해 둔다 (다른 기준은 그때그때 다르다)
+const memoKeyOf = (keywordId, model, marks) => (marks === ownerLabels[keywordId] && marks ? `owner:${keywordId}:${model}` : null);
+
 function scoreKeyword(keywordId, marks = {}) {
     const fused = new Map();
     for (const name of MODELS) {
@@ -100,7 +111,7 @@ function scoreKeyword(keywordId, marks = {}) {
             .map(([pin]) => index.rowOf.get(pin))
             .filter((r) => r !== undefined);
         const all = index.ids.map((_, i) => vecAt(index, i));
-        const z = scoreVectors(all, starts[keywordId][name], rowsWith(YES).map((r) => all[r]), rowsWith(NO).map((r) => all[r]));
+        const z = scoreVectors(all, starts[keywordId][name], rowsWith(YES).map((r) => all[r]), rowsWith(NO).map((r) => all[r]), memoKeyOf(keywordId, name, marks));
         z.forEach((v, i) => fused.set(index.ids[i], (fused.get(index.ids[i]) ?? 0) + v / MODELS.length));
     }
     return fused;
@@ -110,11 +121,17 @@ function scoreKeyword(keywordId, marks = {}) {
  * 한 모델의 임베딩들(all)을 키워드 하나로 채점해 표준화 점수 배열을 돌려준다.
  * start: AI 기본 해석(키워드 묘사의 텍스트 벡터), 없으면(사전에 없는 단어) 라벨만으로 학습한다.
  */
-function scoreVectors(all, start, yesVecs, noVecs) {
+const classifierMemo = new Map();
+function scoreVectors(all, start, yesVecs, noVecs, memoKey = null) {
     const dim = all[0].length;
     let scores;
     if (yesVecs.length >= CLASSIFIER_MIN_LABELS && noVecs.length >= CLASSIFIER_MIN_LABELS) {
-        const w = trainClassifier(dim, yesVecs, noVecs);
+        // memoKey: 같은 라벨로 학습한 경계를 다시 쓸 때 (기본 아카이브 주인의 라벨은 바뀌지 않는다)
+        let w = memoKey && classifierMemo.get(memoKey);
+        if (!w) {
+            w = trainClassifier(dim, yesVecs, noVecs);
+            if (memoKey) classifierMemo.set(memoKey, w);
+        }
         const learned = zscore(all.map((x) => dot(x, w)));
         if (!start) return learned;
         const prior = zscore(all.map((x) => dot(x, start)));
@@ -268,28 +285,55 @@ const testVocab = fs.existsSync(path.join(DATA, 'test_vocab.json')) ? readJson('
 const vocabulary = () => ({
     keywords: KEYWORDS.map((k) => ({ id: k.id, ko: k.ko, synonyms: k.synonyms })),
     subjects: SUBJECTS.map((s) => ({ id: s.id, ko: s.ko, synonyms: s.synonyms })),
+    concepts: CONCEPTS.map((c) => ({ id: c.id, ko: c.ko, synonyms: c.synonyms })),
     testOrder: testVocab.map(keywordKo)
 });
 
 /**
  * 브라우저가 받아 가서 직접 검색하는 "핀 × 느낌 키워드 점수표".
  * basis: 'owner' (기본 아카이브 주인의 라벨 기준) | 'ai' (AI 기본 해석 - 다른 사용자)
+ * extras: 처음 아카이브 밖의 핀(Pinterest 동기화로 들어온 주인의 핀 등) [{ key: 핀 id, vector: SigLIP 2 벡터 }].
+ *   처음 아카이브 핀은 두 모델(CLIP, SigLIP 2) 평균 점수 그대로, 나머지는 SigLIP 2 점수를 같은 눈금으로 맞춰 붙인다.
  * 점수는 z점수×1000(Int16), 주제 확률은 ×65535(Uint16)로 줄여서 base64로 보낸다.
  */
 const feelTableCache = new Map();
 const toBase64 = (typed) => Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength).toString('base64');
-function feelTable(basis) {
-    if (feelTableCache.has(basis)) return feelTableCache.get(basis);
-    const ids = indexes.siglip2.ids;
+const meanSd = (values) => {
+    const mean = values.reduce((a, b) => a + b, 0) / (values.length || 1);
+    return { mean, sd: Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / (values.length || 1)) || 1 };
+};
+function feelTable(basis, extras = []) {
+    if (!extras.length && feelTableCache.has(basis)) return feelTableCache.get(basis);
+    const archiveIds = indexes.siglip2.ids;
+    const ids = [...archiveIds, ...extras.map((e) => e.key)];
+    const sig = indexes.siglip2;
+    const vectors = [...archiveIds.map((_, i) => vecAt(sig, i)), ...extras.map((e) => e.vector)];
     const scoreOf = basis === 'owner' ? ownerScore : aiScore;
+    const toInt16 = (values) => toBase64(Int16Array.from(values, (v) => Math.max(-32767, Math.min(32767, Math.round(v * 1000)))));
     const scores = {};
     KEYWORDS.forEach((k) => {
         const byPin = scoreOf(k.id);
-        scores[k.id] = toBase64(Int16Array.from(ids, (id) => Math.max(-32767, Math.min(32767, Math.round((byPin.get(id) ?? -30) * 1000)))));
+        const archive = archiveIds.map((id) => byPin.get(id) ?? -30);
+        if (!extras.length) { scores[k.id] = toInt16(archive); return; }
+        // SigLIP 2 하나로 전체를 채점하고, 처음 아카이브 핀들의 분포를 기준으로 두 모델 평균 점수의 눈금에 맞춘다
+        const marks = basis === 'owner' ? (ownerLabels[k.id] ?? {}) : {};
+        const rowsWith = (value) => Object.entries(marks).filter(([, v]) => v === value)
+            .map(([pin]) => sig.rowOf.get(pin)).filter((r) => r !== undefined).map((r) => vectors[r]);
+        const single = scoreVectors(vectors, starts[k.id].siglip2, rowsWith(YES), rowsWith(NO), memoKeyOf(k.id, 'siglip2', basis === 'owner' ? ownerLabels[k.id] : null));
+        const ref = meanSd(single.slice(0, archiveIds.length));
+        const fused = meanSd(archive);
+        const extra = single.slice(archiveIds.length).map((v) => fused.mean + (v - ref.mean) / ref.sd * fused.sd);
+        scores[k.id] = toInt16([...archive, ...extra]);
     });
+    // 주제: 처음 아카이브는 두 모델 평균 확률, 나머지는 SigLIP 2 확률을 기준선이 같아지도록 맞춘다
     const subjects = {}, thresholds = {};
     SUBJECTS.forEach((sub) => {
-        subjects[sub.id] = toBase64(Uint16Array.from(ids, (id) => Math.round(Math.min(Math.max(subjectScores[sub.id][id] ?? 0, 0), 1) * 65535)));
+        const ratio = sub.threshold / subjectVectors.thresholds[sub.id];
+        const values = [
+            ...archiveIds.map((id) => subjectScores[sub.id][id] ?? 0),
+            ...extras.map((e) => subjectProbability(e.vector, sub.id) * ratio)
+        ];
+        subjects[sub.id] = toBase64(Uint16Array.from(values, (v) => Math.round(Math.min(Math.max(v, 0), 1) * 65535)));
         thresholds[sub.id] = sub.threshold;
     });
     // 그 사람이 이 키워드에 직접 '아니야'라고 한 사진은 결과에서 뺀다
@@ -304,17 +348,19 @@ function feelTable(basis) {
     const table = {
         version: DATA_VERSION,
         ids,
-        unique: ids.map((id, i) => (uniqueRowSet.has(id) ? i : -1)).filter((i) => i >= 0),
+        unique: ids.map((id, i) => (i >= archiveIds.length || uniqueRowSet.has(id) ? i : -1)).filter((i) => i >= 0),
         labels: {
             keywords: Object.fromEntries(KEYWORDS.map((k) => [k.id, k.ko])),
-            subjects: Object.fromEntries(SUBJECTS.map((sub) => [sub.id, sub.ko]))
+            subjects: Object.fromEntries(SUBJECTS.map((sub) => [sub.id, sub.ko])),
+            concepts: conceptLabels()
         },
         scores,
         subjects,
         thresholds,
-        rejected
+        rejected,
+        concepts: conceptHits(vectors)
     };
-    feelTableCache.set(basis, table);
+    if (!extras.length) feelTableCache.set(basis, table);
     return table;
 }
 
@@ -324,6 +370,15 @@ const USER_MODEL = 'siglip2';
 const subjectVectors = readJson('subject_vectors.json');
 const subjectCategoryIds = Object.keys(subjectVectors.categories);
 const subjectCategoryVecs = subjectCategoryIds.map((c) => Float32Array.from(subjectVectors.categories[c]));
+
+/** SigLIP 2 이미지 벡터 하나의 주제 확률 (카테고리 묘사끼리 경쟁시킨 소프트맥스에서 그 주제 카테고리들의 합) */
+function subjectProbability(x, subjectId) {
+    const logits = subjectCategoryVecs.map((c) => dot(x, c) * subjectVectors.logitScale);
+    const max = Math.max(...logits);
+    const e = logits.map((l) => Math.exp(l - max));
+    const total = e.reduce((a, b) => a + b, 0);
+    return subjectVectors.subjects[subjectId].reduce((a, c) => a + e[subjectCategoryIds.indexOf(c)] / total, 0);
+}
 
 /** pin_embeddings.vector (길이 1 벡터 × 127을 부호 있는 정수로 줄여 base64) → 길이 1 벡터 */
 function decodeVector(b64) {
@@ -368,16 +423,8 @@ function userFeelTable(pins, marksByWord = {}) {
 
     // 주제: 카테고리 묘사끼리 경쟁시킨 확률 (SigLIP 2 하나로 판별하므로 기준선도 그에 맞춘 값을 쓴다)
     const subjects = {};
-    const probs = all.map((x) => {
-        const logits = subjectCategoryVecs.map((c) => dot(x, c) * subjectVectors.logitScale);
-        const max = Math.max(...logits);
-        const e = logits.map((l) => Math.exp(l - max));
-        const total = e.reduce((a, b) => a + b, 0);
-        return e.map((v) => v / total);
-    });
     SUBJECTS.forEach((sub) => {
-        const cols = subjectVectors.subjects[sub.id].map((c) => subjectCategoryIds.indexOf(c));
-        subjects[sub.id] = toBase64(Uint16Array.from(probs, (p) => Math.round(Math.min(cols.reduce((a, c) => a + p[c], 0), 1) * 65535)));
+        subjects[sub.id] = toBase64(Uint16Array.from(all, (x) => Math.round(Math.min(subjectProbability(x, sub.id), 1) * 65535)));
     });
 
     return {
@@ -385,12 +432,14 @@ function userFeelTable(pins, marksByWord = {}) {
         unique: keys.map((_, i) => i),
         labels: {
             keywords: Object.fromEntries(KEYWORDS.map((k) => [k.id, k.ko])),
-            subjects: Object.fromEntries(SUBJECTS.map((sub) => [sub.id, sub.ko]))
+            subjects: Object.fromEntries(SUBJECTS.map((sub) => [sub.id, sub.ko])),
+            concepts: conceptLabels()
         },
         scores,
         subjects,
         thresholds: subjectVectors.thresholds,
-        rejected
+        rejected,
+        concepts: conceptHits(all)
     };
 }
 
@@ -462,6 +511,26 @@ function pickDiverse(pool, count) {
     }
     return picked.map((p) => p.key);
 }
+
+/**
+ * 사물·대상마다 그 대상이 있다고 볼 만한 핀(확률이 기준 이상)과 그 점수(로짓×1000)만 골라 둔다.
+ * 대상이 있는 핀은 대개 적어서 점수표 전체를 보내는 것보다 훨씬 작다.
+ * vectors: SigLIP 2 이미지 벡터들 (점수표의 행 순서) → { 대상 id: { rows: base64(Uint32 행 번호), scores: base64(Int16) } }
+ */
+function conceptHits(vectors) {
+    const hits = {};
+    CONCEPTS.forEach((c, k) => {
+        const q = conceptVecs[k];
+        const rows = [], scores = [];
+        vectors.forEach((x, row) => {
+            const logit = conceptData.logitScale * dot(x, q) + conceptData.logitBias;
+            if (logit >= CONCEPT_MIN_LOGIT) { rows.push(row); scores.push(Math.max(-32767, Math.min(32767, Math.round(logit * 1000)))); }
+        });
+        if (rows.length) hits[c.id] = { rows: toBase64(Uint32Array.from(rows)), scores: toBase64(Int16Array.from(scores)) };
+    });
+    return hits;
+}
+const conceptLabels = () => Object.fromEntries(CONCEPTS.map((c) => [c.id, c.ko]));
 
 // 데이터를 다시 내보내면(export-taste.mjs) 바뀌는 값 - 브라우저가 옛 점수표를 캐시에서 계속 쓰지 않게 주소에 붙인다
 const DATA_VERSION = String(Math.max(...fs.readdirSync(DATA).map((f) => fs.statSync(path.join(DATA, f)).mtimeMs)) | 0);
